@@ -8,7 +8,8 @@ import sys
 import time
 from pathlib import Path
 
-os.environ.setdefault("OMP_NUM_THREADS", "1")
+if not os.environ.get("OMP_NUM_THREADS", "1").isdigit():
+    os.environ["OMP_NUM_THREADS"] = "1"
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import numpy as np
@@ -16,6 +17,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
 from models.st_gnn import STGNNDetector
 from utils.config import get_config_value, load_config
@@ -77,27 +79,29 @@ class IpixWindowDataset(Dataset):
         if not self.x_parts:
             raise ValueError("No IPIX windows were loaded. Check data_dir, split, polarizations, and max_windows.")
 
-        self.x = np.concatenate(self.x_parts, axis=0)
-        self.y = np.concatenate(self.y_parts, axis=0)
+        x = np.concatenate(self.x_parts, axis=0)
+        y = np.concatenate(self.y_parts, axis=0)
+        counts = np.bincount(y.reshape(-1), minlength=2).astype(np.float64)
+        if np.any(counts == 0):
+            self._class_weights = torch.ones(2, dtype=torch.float32)
+        else:
+            self._class_weights = torch.tensor(counts.sum() / (2.0 * counts), dtype=torch.float32)
+
+        self.real = torch.from_numpy(np.ascontiguousarray(x.real, dtype=np.float32))
+        self.imag = torch.from_numpy(np.ascontiguousarray(x.imag, dtype=np.float32))
+        self.y = torch.from_numpy(np.ascontiguousarray(y, dtype=np.int64))
+
+        self.x_parts = []
+        self.y_parts = []
 
     def __len__(self) -> int:
-        return int(self.x.shape[0])
+        return int(self.y.shape[0])
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        sample = self.x[idx]
-        labels = self.y[idx]
-        return (
-            torch.from_numpy(sample.real.astype(np.float32, copy=False)),
-            torch.from_numpy(sample.imag.astype(np.float32, copy=False)),
-            torch.from_numpy(labels.astype(np.int64, copy=False)),
-        )
+        return self.real[idx], self.imag[idx], self.y[idx]
 
     def class_weights(self) -> torch.Tensor:
-        counts = np.bincount(self.y.reshape(-1), minlength=2).astype(np.float64)
-        if np.any(counts == 0):
-            return torch.ones(2, dtype=torch.float32)
-        weights = counts.sum() / (2.0 * counts)
-        return torch.tensor(weights, dtype=torch.float32)
+        return self._class_weights.clone()
 
 
 def train_one_epoch(
@@ -106,6 +110,10 @@ def train_one_epoch(
     criterion: nn.Module,
     optimizer: optim.Optimizer,
     device: torch.device,
+    epoch: int,
+    epochs: int,
+    show_progress: bool,
+    log_interval: int,
 ) -> tuple[float, dict[str, float]]:
     model.train()
     total_loss = 0.0
@@ -113,10 +121,18 @@ def train_one_epoch(
     correct = 0
     tp = fp = tn = fn = 0
 
-    for real, imag, labels in loader:
-        real = real.to(device)
-        imag = imag.to(device)
-        labels = labels.to(device)
+    iterator = tqdm(
+        loader,
+        desc=f"Epoch {epoch:03d}/{epochs}",
+        dynamic_ncols=True,
+        leave=False,
+        mininterval=2.0,
+        disable=not show_progress,
+    )
+    for batch_idx, (real, imag, labels) in enumerate(iterator, start=1):
+        real = real.to(device, non_blocking=True)
+        imag = imag.to(device, non_blocking=True)
+        labels = labels.to(device, non_blocking=True)
 
         optimizer.zero_grad(set_to_none=True)
         _, logits, _, _ = model(torch.complex(real, imag), return_features=True)
@@ -133,6 +149,28 @@ def train_one_epoch(
         fp += int(((pred == 1) & (labels == 0)).sum().item())
         tn += int(((pred == 0) & (labels == 0)).sum().item())
         fn += int(((pred == 0) & (labels == 1)).sum().item())
+
+        avg_loss = total_loss / batch_idx
+        batch_metrics = {
+            "accuracy": correct / total_bins if total_bins else 0.0,
+            "pd": tp / (tp + fn) if (tp + fn) else 0.0,
+            "pf": fp / (fp + tn) if (fp + tn) else 0.0,
+        }
+        if show_progress:
+            iterator.set_postfix(
+                loss=f"{loss.item():.4f}",
+                avg=f"{avg_loss:.4f}",
+                acc=f"{batch_metrics['accuracy']:.4f}",
+                PD=f"{batch_metrics['pd']:.4f}",
+                PF=f"{batch_metrics['pf']:.4f}",
+            )
+        elif log_interval > 0 and batch_idx % log_interval == 0:
+            print(
+                f"Epoch {epoch:03d}/{epochs} batch {batch_idx}/{len(loader)} "
+                f"| loss={loss.item():.6f} | avg={avg_loss:.6f} "
+                f"| acc={batch_metrics['accuracy']:.4f} | PD={batch_metrics['pd']:.4f} | PF={batch_metrics['pf']:.4f}",
+                flush=True,
+            )
 
     metrics = {
         "accuracy": correct / total_bins if total_bins else 0.0,
@@ -262,6 +300,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-test-windows-per-file", type=int, default=None)
     parser.add_argument("--checkpoint", type=Path, default=None)
     parser.add_argument("--eval-only", action="store_true")
+    parser.add_argument("--no-progress", action="store_true")
+    parser.add_argument("--log-interval", type=int, default=0)
     return parser.parse_args(remaining)
 
 
@@ -301,6 +341,7 @@ def main() -> None:
             shuffle=True,
             num_workers=args.num_workers,
             pin_memory=torch.cuda.is_available(),
+            persistent_workers=args.num_workers > 0,
         )
 
         criterion = nn.CrossEntropyLoss(weight=train_dataset.class_weights().to(device))
@@ -311,7 +352,17 @@ def main() -> None:
         t0 = time.time()
 
         for epoch in range(args.epochs):
-            loss, metrics = train_one_epoch(model, train_loader, criterion, optimizer, device)
+            loss, metrics = train_one_epoch(
+                model,
+                train_loader,
+                criterion,
+                optimizer,
+                device,
+                epoch + 1,
+                args.epochs,
+                not args.no_progress,
+                args.log_interval,
+            )
             scheduler.step()
             elapsed = time.time() - t0
             print(
