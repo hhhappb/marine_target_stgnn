@@ -4,6 +4,7 @@ ST-GNN 论文复现 - 最终评估脚本
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+os.environ.setdefault("OMP_NUM_THREADS", "1")
 import torch, numpy as np, json, matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -20,7 +21,11 @@ print("="*60)
 # Load model
 model = STGNNDetector(P=P, N=N).to(device)
 ckpt = torch.load('./checkpoints/best_model_repro.pth')
-model.load_state_dict(ckpt)
+incompatible = model.load_state_dict(ckpt, strict=False)
+if incompatible.missing_keys:
+    raise RuntimeError(f"Missing checkpoint keys: {incompatible.missing_keys}")
+if incompatible.unexpected_keys:
+    print(f"Ignored extra checkpoint keys: {incompatible.unexpected_keys}")
 model.eval()
 print(f"模型加载成功 | Params: {sum(p.numel() for p in model.parameters()):,}")
 
