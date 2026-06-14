@@ -4,7 +4,8 @@ ST-GNN 论文复现 - 最终评估脚本
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-os.environ.setdefault("OMP_NUM_THREADS", "1")
+if not os.environ.get("OMP_NUM_THREADS", "1").isdigit():
+    os.environ["OMP_NUM_THREADS"] = "1"
 import torch, numpy as np, json, matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
