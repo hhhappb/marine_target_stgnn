@@ -1,0 +1,21 @@
+{
+  "source": "http://soma.ece.mcmaster.ca/ipix/dartmouth/datasets.html",
+  "range_bin_indexing": "one_based_inclusive",
+  "target_policy_note": "Primary is the strongest target range bin. Secondary is the inclusive range of neighboring bins where the target may also be visible.",
+  "files": {
+    "19931107_135603_starea.cdf": {"file_number": 17, "primary": 9, "secondary": [8, 9, 10, 11]},
+    "19931107_141630_starea.cdf": {"file_number": 18, "primary": 9, "secondary": [8, 9, 10, 11]},
+    "19931107_145028_starea.cdf": {"file_number": 19, "primary": 8, "secondary": [7, 8, 9]},
+    "19931108_213827_starea.cdf": {"file_number": 25, "primary": 7, "secondary": [6, 7, 8]},
+    "19931108_220902_starea.cdf": {"file_number": 26, "primary": 7, "secondary": [6, 7, 8]},
+    "19931109_191449_starea.cdf": {"file_number": 30, "primary": 7, "secondary": [6, 7, 8]},
+    "19931109_202217_starea.cdf": {"file_number": 31, "primary": 7, "secondary": [6, 7, 8, 9]},
+    "19931110_001635_starea.cdf": {"file_number": 40, "primary": 7, "secondary": [5, 6, 7, 8]},
+    "19931111_163625_starea.cdf": {"file_number": 54, "primary": 8, "secondary": [7, 8, 9, 10]},
+    "19931118_023604_stareC0000.cdf": {"file_number": 280, "primary": 8, "secondary": [7, 8, 9, 10]},
+    "19931118_035737_stareC0000.cdf": {"file_number": 283, "primary": 10, "secondary": [8, 9, 10, 11, 12]},
+    "19931118_162155_stareC0000.cdf": {"file_number": 310, "primary": 7, "secondary": [6, 7, 8, 9]},
+    "19931118_162658_stareC0000.cdf": {"file_number": 311, "primary": 7, "secondary": [6, 7, 8, 9]},
+    "19931118_174259_stareC0000.cdf": {"file_number": 320, "primary": 7, "secondary": [6, 7, 8, 9]}
+  }
+}

@@ -1,0 +1,2122 @@
+{
+  "raw_dir": "datasets\\ipix_dartmouth\\raw",
+  "labels": "datasets\\ipix_dartmouth\\labels.json",
+  "output_dir": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related",
+  "train_fraction": 0.6,
+  "window": 4,
+  "stride": 4,
+  "target_policy": "related",
+  "polarizations": [
+    "hh",
+    "hv",
+    "vv",
+    "vh"
+  ],
+  "records": [
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_135603_starea__hh__train.npz",
+      "source_file": "19931107_135603_starea.cdf",
+      "polarization": "hh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 9,
+      "secondary": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_135603_starea__hh__test.npz",
+      "source_file": "19931107_135603_starea.cdf",
+      "polarization": "hh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 9,
+      "secondary": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_135603_starea__hv__train.npz",
+      "source_file": "19931107_135603_starea.cdf",
+      "polarization": "hv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 9,
+      "secondary": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_135603_starea__hv__test.npz",
+      "source_file": "19931107_135603_starea.cdf",
+      "polarization": "hv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 9,
+      "secondary": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_135603_starea__vv__train.npz",
+      "source_file": "19931107_135603_starea.cdf",
+      "polarization": "vv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 9,
+      "secondary": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_135603_starea__vv__test.npz",
+      "source_file": "19931107_135603_starea.cdf",
+      "polarization": "vv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 9,
+      "secondary": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_135603_starea__vh__train.npz",
+      "source_file": "19931107_135603_starea.cdf",
+      "polarization": "vh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 9,
+      "secondary": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_135603_starea__vh__test.npz",
+      "source_file": "19931107_135603_starea.cdf",
+      "polarization": "vh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 9,
+      "secondary": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_141630_starea__hh__train.npz",
+      "source_file": "19931107_141630_starea.cdf",
+      "polarization": "hh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 9,
+      "secondary": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_141630_starea__hh__test.npz",
+      "source_file": "19931107_141630_starea.cdf",
+      "polarization": "hh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 9,
+      "secondary": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_141630_starea__hv__train.npz",
+      "source_file": "19931107_141630_starea.cdf",
+      "polarization": "hv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 9,
+      "secondary": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_141630_starea__hv__test.npz",
+      "source_file": "19931107_141630_starea.cdf",
+      "polarization": "hv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 9,
+      "secondary": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_141630_starea__vv__train.npz",
+      "source_file": "19931107_141630_starea.cdf",
+      "polarization": "vv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 9,
+      "secondary": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_141630_starea__vv__test.npz",
+      "source_file": "19931107_141630_starea.cdf",
+      "polarization": "vv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 9,
+      "secondary": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_141630_starea__vh__train.npz",
+      "source_file": "19931107_141630_starea.cdf",
+      "polarization": "vh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 9,
+      "secondary": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_141630_starea__vh__test.npz",
+      "source_file": "19931107_141630_starea.cdf",
+      "polarization": "vh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 9,
+      "secondary": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_145028_starea__hh__train.npz",
+      "source_file": "19931107_145028_starea.cdf",
+      "polarization": "hh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_145028_starea__hh__test.npz",
+      "source_file": "19931107_145028_starea.cdf",
+      "polarization": "hh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_145028_starea__hv__train.npz",
+      "source_file": "19931107_145028_starea.cdf",
+      "polarization": "hv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_145028_starea__hv__test.npz",
+      "source_file": "19931107_145028_starea.cdf",
+      "polarization": "hv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_145028_starea__vv__train.npz",
+      "source_file": "19931107_145028_starea.cdf",
+      "polarization": "vv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_145028_starea__vv__test.npz",
+      "source_file": "19931107_145028_starea.cdf",
+      "polarization": "vv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_145028_starea__vh__train.npz",
+      "source_file": "19931107_145028_starea.cdf",
+      "polarization": "vh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931107_145028_starea__vh__test.npz",
+      "source_file": "19931107_145028_starea.cdf",
+      "polarization": "vh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931108_213827_starea__hh__train.npz",
+      "source_file": "19931108_213827_starea.cdf",
+      "polarization": "hh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931108_213827_starea__hh__test.npz",
+      "source_file": "19931108_213827_starea.cdf",
+      "polarization": "hh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931108_213827_starea__hv__train.npz",
+      "source_file": "19931108_213827_starea.cdf",
+      "polarization": "hv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931108_213827_starea__hv__test.npz",
+      "source_file": "19931108_213827_starea.cdf",
+      "polarization": "hv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931108_213827_starea__vv__train.npz",
+      "source_file": "19931108_213827_starea.cdf",
+      "polarization": "vv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931108_213827_starea__vv__test.npz",
+      "source_file": "19931108_213827_starea.cdf",
+      "polarization": "vv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931108_213827_starea__vh__train.npz",
+      "source_file": "19931108_213827_starea.cdf",
+      "polarization": "vh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931108_213827_starea__vh__test.npz",
+      "source_file": "19931108_213827_starea.cdf",
+      "polarization": "vh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931108_220902_starea__hh__train.npz",
+      "source_file": "19931108_220902_starea.cdf",
+      "polarization": "hh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931108_220902_starea__hh__test.npz",
+      "source_file": "19931108_220902_starea.cdf",
+      "polarization": "hh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931108_220902_starea__hv__train.npz",
+      "source_file": "19931108_220902_starea.cdf",
+      "polarization": "hv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931108_220902_starea__hv__test.npz",
+      "source_file": "19931108_220902_starea.cdf",
+      "polarization": "hv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931108_220902_starea__vv__train.npz",
+      "source_file": "19931108_220902_starea.cdf",
+      "polarization": "vv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931108_220902_starea__vv__test.npz",
+      "source_file": "19931108_220902_starea.cdf",
+      "polarization": "vv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931108_220902_starea__vh__train.npz",
+      "source_file": "19931108_220902_starea.cdf",
+      "polarization": "vh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931108_220902_starea__vh__test.npz",
+      "source_file": "19931108_220902_starea.cdf",
+      "polarization": "vh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931109_191449_starea__hh__train.npz",
+      "source_file": "19931109_191449_starea.cdf",
+      "polarization": "hh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931109_191449_starea__hh__test.npz",
+      "source_file": "19931109_191449_starea.cdf",
+      "polarization": "hh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931109_191449_starea__hv__train.npz",
+      "source_file": "19931109_191449_starea.cdf",
+      "polarization": "hv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931109_191449_starea__hv__test.npz",
+      "source_file": "19931109_191449_starea.cdf",
+      "polarization": "hv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931109_191449_starea__vv__train.npz",
+      "source_file": "19931109_191449_starea.cdf",
+      "polarization": "vv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931109_191449_starea__vv__test.npz",
+      "source_file": "19931109_191449_starea.cdf",
+      "polarization": "vv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931109_191449_starea__vh__train.npz",
+      "source_file": "19931109_191449_starea.cdf",
+      "polarization": "vh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931109_191449_starea__vh__test.npz",
+      "source_file": "19931109_191449_starea.cdf",
+      "polarization": "vh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931109_202217_starea__hh__train.npz",
+      "source_file": "19931109_202217_starea.cdf",
+      "polarization": "hh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931109_202217_starea__hh__test.npz",
+      "source_file": "19931109_202217_starea.cdf",
+      "polarization": "hh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931109_202217_starea__hv__train.npz",
+      "source_file": "19931109_202217_starea.cdf",
+      "polarization": "hv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931109_202217_starea__hv__test.npz",
+      "source_file": "19931109_202217_starea.cdf",
+      "polarization": "hv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931109_202217_starea__vv__train.npz",
+      "source_file": "19931109_202217_starea.cdf",
+      "polarization": "vv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931109_202217_starea__vv__test.npz",
+      "source_file": "19931109_202217_starea.cdf",
+      "polarization": "vv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931109_202217_starea__vh__train.npz",
+      "source_file": "19931109_202217_starea.cdf",
+      "polarization": "vh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931109_202217_starea__vh__test.npz",
+      "source_file": "19931109_202217_starea.cdf",
+      "polarization": "vh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931110_001635_starea__hh__train.npz",
+      "source_file": "19931110_001635_starea.cdf",
+      "polarization": "hh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        5,
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931110_001635_starea__hh__test.npz",
+      "source_file": "19931110_001635_starea.cdf",
+      "polarization": "hh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        5,
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931110_001635_starea__hv__train.npz",
+      "source_file": "19931110_001635_starea.cdf",
+      "polarization": "hv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        5,
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931110_001635_starea__hv__test.npz",
+      "source_file": "19931110_001635_starea.cdf",
+      "polarization": "hv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        5,
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931110_001635_starea__vv__train.npz",
+      "source_file": "19931110_001635_starea.cdf",
+      "polarization": "vv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        5,
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931110_001635_starea__vv__test.npz",
+      "source_file": "19931110_001635_starea.cdf",
+      "polarization": "vv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        5,
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931110_001635_starea__vh__train.npz",
+      "source_file": "19931110_001635_starea.cdf",
+      "polarization": "vh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        5,
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931110_001635_starea__vh__test.npz",
+      "source_file": "19931110_001635_starea.cdf",
+      "polarization": "vh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        5,
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931111_163625_starea__hh__train.npz",
+      "source_file": "19931111_163625_starea.cdf",
+      "polarization": "hh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931111_163625_starea__hh__test.npz",
+      "source_file": "19931111_163625_starea.cdf",
+      "polarization": "hh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931111_163625_starea__hv__train.npz",
+      "source_file": "19931111_163625_starea.cdf",
+      "polarization": "hv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931111_163625_starea__hv__test.npz",
+      "source_file": "19931111_163625_starea.cdf",
+      "polarization": "hv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931111_163625_starea__vv__train.npz",
+      "source_file": "19931111_163625_starea.cdf",
+      "polarization": "vv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931111_163625_starea__vv__test.npz",
+      "source_file": "19931111_163625_starea.cdf",
+      "polarization": "vv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931111_163625_starea__vh__train.npz",
+      "source_file": "19931111_163625_starea.cdf",
+      "polarization": "vh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931111_163625_starea__vh__test.npz",
+      "source_file": "19931111_163625_starea.cdf",
+      "polarization": "vh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_023604_stareC0000__hh__train.npz",
+      "source_file": "19931118_023604_stareC0000.cdf",
+      "polarization": "hh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_023604_stareC0000__hh__test.npz",
+      "source_file": "19931118_023604_stareC0000.cdf",
+      "polarization": "hh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_023604_stareC0000__hv__train.npz",
+      "source_file": "19931118_023604_stareC0000.cdf",
+      "polarization": "hv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_023604_stareC0000__hv__test.npz",
+      "source_file": "19931118_023604_stareC0000.cdf",
+      "polarization": "hv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_023604_stareC0000__vv__train.npz",
+      "source_file": "19931118_023604_stareC0000.cdf",
+      "polarization": "vv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_023604_stareC0000__vv__test.npz",
+      "source_file": "19931118_023604_stareC0000.cdf",
+      "polarization": "vv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_023604_stareC0000__vh__train.npz",
+      "source_file": "19931118_023604_stareC0000.cdf",
+      "polarization": "vh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_023604_stareC0000__vh__test.npz",
+      "source_file": "19931118_023604_stareC0000.cdf",
+      "polarization": "vh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 8,
+      "secondary": [
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_035737_stareC0000__hh__train.npz",
+      "source_file": "19931118_035737_stareC0000.cdf",
+      "polarization": "hh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 10,
+      "secondary": [
+        8,
+        9,
+        10,
+        11,
+        12
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_035737_stareC0000__hh__test.npz",
+      "source_file": "19931118_035737_stareC0000.cdf",
+      "polarization": "hh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 10,
+      "secondary": [
+        8,
+        9,
+        10,
+        11,
+        12
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_035737_stareC0000__hv__train.npz",
+      "source_file": "19931118_035737_stareC0000.cdf",
+      "polarization": "hv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 10,
+      "secondary": [
+        8,
+        9,
+        10,
+        11,
+        12
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_035737_stareC0000__hv__test.npz",
+      "source_file": "19931118_035737_stareC0000.cdf",
+      "polarization": "hv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 10,
+      "secondary": [
+        8,
+        9,
+        10,
+        11,
+        12
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_035737_stareC0000__vv__train.npz",
+      "source_file": "19931118_035737_stareC0000.cdf",
+      "polarization": "vv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 10,
+      "secondary": [
+        8,
+        9,
+        10,
+        11,
+        12
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_035737_stareC0000__vv__test.npz",
+      "source_file": "19931118_035737_stareC0000.cdf",
+      "polarization": "vv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 10,
+      "secondary": [
+        8,
+        9,
+        10,
+        11,
+        12
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_035737_stareC0000__vh__train.npz",
+      "source_file": "19931118_035737_stareC0000.cdf",
+      "polarization": "vh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 10,
+      "secondary": [
+        8,
+        9,
+        10,
+        11,
+        12
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_035737_stareC0000__vh__test.npz",
+      "source_file": "19931118_035737_stareC0000.cdf",
+      "polarization": "vh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 10,
+      "secondary": [
+        8,
+        9,
+        10,
+        11,
+        12
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_162155_stareC0000__hh__train.npz",
+      "source_file": "19931118_162155_stareC0000.cdf",
+      "polarization": "hh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_162155_stareC0000__hh__test.npz",
+      "source_file": "19931118_162155_stareC0000.cdf",
+      "polarization": "hh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_162155_stareC0000__hv__train.npz",
+      "source_file": "19931118_162155_stareC0000.cdf",
+      "polarization": "hv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_162155_stareC0000__hv__test.npz",
+      "source_file": "19931118_162155_stareC0000.cdf",
+      "polarization": "hv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_162155_stareC0000__vv__train.npz",
+      "source_file": "19931118_162155_stareC0000.cdf",
+      "polarization": "vv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_162155_stareC0000__vv__test.npz",
+      "source_file": "19931118_162155_stareC0000.cdf",
+      "polarization": "vv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_162155_stareC0000__vh__train.npz",
+      "source_file": "19931118_162155_stareC0000.cdf",
+      "polarization": "vh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_162155_stareC0000__vh__test.npz",
+      "source_file": "19931118_162155_stareC0000.cdf",
+      "polarization": "vh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_162658_stareC0000__hh__train.npz",
+      "source_file": "19931118_162658_stareC0000.cdf",
+      "polarization": "hh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_162658_stareC0000__hh__test.npz",
+      "source_file": "19931118_162658_stareC0000.cdf",
+      "polarization": "hh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_162658_stareC0000__hv__train.npz",
+      "source_file": "19931118_162658_stareC0000.cdf",
+      "polarization": "hv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_162658_stareC0000__hv__test.npz",
+      "source_file": "19931118_162658_stareC0000.cdf",
+      "polarization": "hv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_162658_stareC0000__vv__train.npz",
+      "source_file": "19931118_162658_stareC0000.cdf",
+      "polarization": "vv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_162658_stareC0000__vv__test.npz",
+      "source_file": "19931118_162658_stareC0000.cdf",
+      "polarization": "vv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_162658_stareC0000__vh__train.npz",
+      "source_file": "19931118_162658_stareC0000.cdf",
+      "polarization": "vh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_162658_stareC0000__vh__test.npz",
+      "source_file": "19931118_162658_stareC0000.cdf",
+      "polarization": "vh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_174259_stareC0000__hh__train.npz",
+      "source_file": "19931118_174259_stareC0000.cdf",
+      "polarization": "hh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_174259_stareC0000__hh__test.npz",
+      "source_file": "19931118_174259_stareC0000.cdf",
+      "polarization": "hh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_174259_stareC0000__hv__train.npz",
+      "source_file": "19931118_174259_stareC0000.cdf",
+      "polarization": "hv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_174259_stareC0000__hv__test.npz",
+      "source_file": "19931118_174259_stareC0000.cdf",
+      "polarization": "hv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_174259_stareC0000__vv__train.npz",
+      "source_file": "19931118_174259_stareC0000.cdf",
+      "polarization": "vv",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_174259_stareC0000__vv__test.npz",
+      "source_file": "19931118_174259_stareC0000.cdf",
+      "polarization": "vv",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_174259_stareC0000__vh__train.npz",
+      "source_file": "19931118_174259_stareC0000.cdf",
+      "polarization": "vh",
+      "split": "train",
+      "windows": 19660,
+      "shape": [
+        19660,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "path": "datasets\\ipix_dartmouth\\processed\\window4_stride4_related\\19931118_174259_stareC0000__vh__test.npz",
+      "source_file": "19931118_174259_stareC0000.cdf",
+      "polarization": "vh",
+      "split": "test",
+      "windows": 13107,
+      "shape": [
+        13107,
+        4,
+        14
+      ],
+      "primary": 7,
+      "secondary": [
+        6,
+        7,
+        8,
+        9
+      ]
+    }
+  ],
+  "total_windows": 1834952
+}

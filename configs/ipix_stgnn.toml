@@ -1,0 +1,28 @@
+[paths]
+data_dir = "datasets/ipix_dartmouth/processed/window4_stride4_related"
+raw_dir = "datasets/ipix_dartmouth/raw"
+labels = "datasets/ipix_dartmouth/labels.json"
+processed_dir = "datasets/ipix_dartmouth/processed"
+save_dir = "checkpoints"
+
+[ipix]
+polarizations = ["hh", "hv", "vv", "vh"]
+window = 4
+stride = 4
+train_fraction = 0.6
+target_policy = "related"
+
+[model]
+pulses = 4
+range_cells = 14
+
+[train]
+epochs = 50
+batch_size = 32
+learning_rate = 0.001
+num_workers = 0
+seed = 42
+
+[eval]
+pfa_values = [0.0001, 0.001, 0.01]
+target_pfa = 0.001
