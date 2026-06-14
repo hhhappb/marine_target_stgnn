@@ -121,56 +121,62 @@ def train_one_epoch(
     correct = 0
     tp = fp = tn = fn = 0
 
-    iterator = tqdm(
-        loader,
+    progress = tqdm(
+        total=len(loader),
         desc=f"Epoch {epoch:03d}/{epochs}",
         dynamic_ncols=True,
-        leave=False,
+        leave=True,
         mininterval=2.0,
+        file=sys.stdout,
         disable=not show_progress,
     )
-    for batch_idx, (real, imag, labels) in enumerate(iterator, start=1):
-        real = real.to(device, non_blocking=True)
-        imag = imag.to(device, non_blocking=True)
-        labels = labels.to(device, non_blocking=True)
+    try:
+        for batch_idx, (real, imag, labels) in enumerate(loader, start=1):
+            real = real.to(device, non_blocking=True)
+            imag = imag.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True)
 
-        optimizer.zero_grad(set_to_none=True)
-        _, logits, _, _ = model(torch.complex(real, imag), return_features=True)
-        loss = criterion(logits, labels)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            _, logits, _, _ = model(torch.complex(real, imag), return_features=True)
+            loss = criterion(logits, labels)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
 
-        total_loss += float(loss.item())
-        pred = logits.argmax(dim=1)
-        total_bins += labels.numel()
-        correct += int((pred == labels).sum().item())
-        tp += int(((pred == 1) & (labels == 1)).sum().item())
-        fp += int(((pred == 1) & (labels == 0)).sum().item())
-        tn += int(((pred == 0) & (labels == 0)).sum().item())
-        fn += int(((pred == 0) & (labels == 1)).sum().item())
+            loss_value = float(loss.item())
+            total_loss += loss_value
+            pred = logits.argmax(dim=1)
+            total_bins += labels.numel()
+            correct += int((pred == labels).sum().item())
+            tp += int(((pred == 1) & (labels == 1)).sum().item())
+            fp += int(((pred == 1) & (labels == 0)).sum().item())
+            tn += int(((pred == 0) & (labels == 0)).sum().item())
+            fn += int(((pred == 0) & (labels == 1)).sum().item())
 
-        avg_loss = total_loss / batch_idx
-        batch_metrics = {
-            "accuracy": correct / total_bins if total_bins else 0.0,
-            "pd": tp / (tp + fn) if (tp + fn) else 0.0,
-            "pf": fp / (fp + tn) if (fp + tn) else 0.0,
-        }
-        if show_progress:
-            iterator.set_postfix(
-                loss=f"{loss.item():.4f}",
-                avg=f"{avg_loss:.4f}",
-                acc=f"{batch_metrics['accuracy']:.4f}",
-                PD=f"{batch_metrics['pd']:.4f}",
-                PF=f"{batch_metrics['pf']:.4f}",
-            )
-        elif log_interval > 0 and batch_idx % log_interval == 0:
-            print(
-                f"Epoch {epoch:03d}/{epochs} batch {batch_idx}/{len(loader)} "
-                f"| loss={loss.item():.6f} | avg={avg_loss:.6f} "
-                f"| acc={batch_metrics['accuracy']:.4f} | PD={batch_metrics['pd']:.4f} | PF={batch_metrics['pf']:.4f}",
-                flush=True,
-            )
+            avg_loss = total_loss / batch_idx
+            batch_metrics = {
+                "accuracy": correct / total_bins if total_bins else 0.0,
+                "pd": tp / (tp + fn) if (tp + fn) else 0.0,
+                "pf": fp / (fp + tn) if (fp + tn) else 0.0,
+            }
+            if show_progress:
+                progress.update(1)
+                progress.set_postfix(
+                    loss=f"{loss_value:.4f}",
+                    avg=f"{avg_loss:.4f}",
+                    acc=f"{batch_metrics['accuracy']:.4f}",
+                    PD=f"{batch_metrics['pd']:.4f}",
+                    PF=f"{batch_metrics['pf']:.4f}",
+                )
+            elif log_interval > 0 and batch_idx % log_interval == 0:
+                print(
+                    f"Epoch {epoch:03d}/{epochs} batch {batch_idx}/{len(loader)} "
+                    f"| loss={loss_value:.6f} | avg={avg_loss:.6f} "
+                    f"| acc={batch_metrics['accuracy']:.4f} | PD={batch_metrics['pd']:.4f} | PF={batch_metrics['pf']:.4f}",
+                    flush=True,
+                )
+    finally:
+        progress.close()
 
     metrics = {
         "accuracy": correct / total_bins if total_bins else 0.0,
