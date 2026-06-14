@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import copy
-import tomllib
 from pathlib import Path
 from typing import Any
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
