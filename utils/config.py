@@ -4,11 +4,6 @@ import copy
 from pathlib import Path
 from typing import Any
 
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib
-
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "paths": {
@@ -49,8 +44,16 @@ def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
         return config
 
     path = Path(config_path)
-    with path.open("rb") as handle:
-        user_config = tomllib.load(handle)
+    if path.suffix.lower() not in {".yaml", ".yml"}:
+        raise SystemExit(f"Unsupported config file type: {path.suffix}. Use a .yaml config file.")
+
+    try:
+        import yaml
+    except ModuleNotFoundError as exc:
+        raise SystemExit("Missing dependency: PyYAML. Install with `python -m pip install PyYAML`.") from exc
+
+    with path.open("r", encoding="utf-8") as handle:
+        user_config = yaml.safe_load(handle) or {}
     return merge_config(config, user_config)
 
 

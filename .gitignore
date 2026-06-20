@@ -14,3 +14,28 @@ Thumbs.db
 *.log
 *.tmp
 *.temp
+
+# Training/evaluation run outputs
+logs/training/
+
+# Paper experiment outputs
+paper_modules/results/
+
+# Model checkpoints and generated experiment artifacts
+checkpoints/
+*.pth
+*.pt
+*.ckpt
+
+# Large raw/processed datasets
+*.cdf
+*.npz
+
+# Generated reports and figures
+reports/figures/
+reports/*.pdf
+
+# Local reference paper PDFs; track intentionally with git add -f if needed.
+Marine_Target_Detection_via_SpatialTemporal_Graph_Neural_Network.pdf
+
+# Keep source docs/configs tracked explicitly when needed.

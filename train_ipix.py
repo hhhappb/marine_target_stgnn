@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import random
@@ -266,10 +267,11 @@ def evaluate_files(
 
 def save_checkpoint(path: Path, model: STGNNDetector, args: argparse.Namespace, extra: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    saved_args = {key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()}
     torch.save(
         {
             "model_state": model.state_dict(),
-            "args": vars(args),
+            "args": saved_args,
             **extra,
         },
         path,
@@ -277,13 +279,58 @@ def save_checkpoint(path: Path, model: STGNNDetector, args: argparse.Namespace, 
 
 
 def load_checkpoint(path: Path, model: STGNNDetector, device: torch.device) -> None:
-    payload = torch.load(path, map_location=device)
+    payload = torch.load(path, map_location=device, weights_only=False)
     state = payload["model_state"] if isinstance(payload, dict) and "model_state" in payload else payload
     model.load_state_dict(state)
 
 
+def write_training_history(path: Path, history: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields = ["epoch", "loss", "accuracy", "PD", "PF", "elapsed_seconds", "lr", "is_best"]
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(history)
+
+
+def save_training_curves(path: Path, history: list[dict[str, object]]) -> None:
+    if not history:
+        return
+
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise RuntimeError(
+            "matplotlib is required to save training curves. "
+            "Install it with: pip install matplotlib"
+        ) from exc
+
+    epochs = [int(row["epoch"]) for row in history]
+    series = [
+        ("loss", "Loss", "loss"),
+        ("accuracy", "Accuracy", "accuracy"),
+        ("PD", "Detection probability", "PD"),
+        ("PF", "False alarm probability", "PF"),
+    ]
+
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8), constrained_layout=True)
+    for ax, (key, title, ylabel) in zip(axes.ravel(), series):
+        ax.plot(epochs, [float(row[key]) for row in history], marker="o", linewidth=1.8)
+        ax.set_title(title)
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel(ylabel)
+        ax.grid(True, alpha=0.3)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=160)
+    plt.close(fig)
+
+
 def parse_args() -> argparse.Namespace:
-    default_config = Path("configs/ipix_stgnn.toml")
+    default_config = Path("configs/ipix_stgnn.yaml")
     config_parser = argparse.ArgumentParser(add_help=False)
     config_parser.add_argument("--config", type=Path, default=default_config if default_config.exists() else None)
     config_args, remaining = config_parser.parse_known_args()
@@ -355,6 +402,7 @@ def main() -> None:
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, args.epochs))
         best_loss = float("inf")
         best_path = args.save_dir / "ipix_best_model.pth"
+        training_history: list[dict[str, object]] = []
         t0 = time.time()
 
         for epoch in range(args.epochs):
@@ -369,21 +417,41 @@ def main() -> None:
                 not args.no_progress,
                 args.log_interval,
             )
+            current_lr = float(optimizer.param_groups[0]["lr"])
             scheduler.step()
             elapsed = time.time() - t0
+            is_best = loss < best_loss
+            training_history.append(
+                {
+                    "epoch": epoch + 1,
+                    "loss": loss,
+                    "accuracy": metrics["accuracy"],
+                    "PD": metrics["pd"],
+                    "PF": metrics["pf"],
+                    "elapsed_seconds": elapsed,
+                    "lr": current_lr,
+                    "is_best": is_best,
+                }
+            )
             print(
                 f"Epoch {epoch + 1:03d}/{args.epochs} | loss={loss:.6f} "
                 f"| acc={metrics['accuracy']:.4f} | PD={metrics['pd']:.4f} | PF={metrics['pf']:.4f} "
                 f"| {elapsed:.1f}s",
                 flush=True,
             )
-            if loss < best_loss:
+            if is_best:
                 best_loss = loss
                 save_checkpoint(best_path, model, args, {"best_loss": best_loss, "epoch": epoch + 1})
                 print(f"  saved best checkpoint: {best_path}", flush=True)
 
         final_path = args.save_dir / "ipix_final_model.pth"
         save_checkpoint(final_path, model, args, {"best_loss": best_loss, "epoch": args.epochs})
+        history_path = args.save_dir / "ipix_training_history.csv"
+        write_training_history(history_path, training_history)
+        print(f"Saved training history: {history_path}", flush=True)
+        curves_path = args.save_dir / "ipix_training_curves.png"
+        save_training_curves(curves_path, training_history)
+        print(f"Saved training curves: {curves_path}", flush=True)
         load_checkpoint(best_path, model, device)
 
     results = evaluate_files(

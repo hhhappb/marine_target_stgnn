@@ -1,6 +1,0 @@
-torch>=1.10.0
-numpy>=1.21.0
-scipy>=1.7.0
-PyYAML>=5.4.0
-tqdm>=4.62.0
-tomli>=2.0.0; python_version < "3.11"

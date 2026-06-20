@@ -1,0 +1,48 @@
+paths:
+  data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related
+  save_dir: paper_modules/results/dynamic_spatial_graph
+
+ipix:
+  polarizations: [hh, hv, vv, vh]
+
+model:
+  name: experimental_stgnn
+  pulses: 4
+  range_cells: 14
+
+radar_features:
+  type: real_imag_phase_amp
+  hidden_channels: 48
+  out_channels: 64
+
+spatial_graph:
+  type: local_plus_dynamic_prior
+  k: 1
+  out_channels: 128
+  use_distance_decay: true
+  distance_decay: 0.25
+  use_feature_similarity: true
+
+temporal:
+  type: convgru_baseline
+  hidden_channels: 256
+  out_channels: 1024
+
+clutter_gate:
+  enabled: false
+
+detection_head:
+  hidden_channels: 512
+
+loss:
+  type: cross_entropy
+
+train:
+  epochs: 50
+  batch_size: 32
+  learning_rate: 0.001
+  num_workers: 0
+  seed: 42
+
+eval:
+  pfa_values: [0.0001, 0.001, 0.01]
