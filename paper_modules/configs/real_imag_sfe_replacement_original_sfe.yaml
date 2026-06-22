@@ -1,12 +1,12 @@
 paths:
   data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related
-  save_dir: paper_modules/results/pfa_aware_loss
+  save_dir: paper_modules/results/real_imag_sfe_replacement_original_sfe
 
 ipix:
   polarizations: [hh, hv, vv, vh]
 
 model:
-  name: experimental_stgnn
+  name: sfe_replacement_stgnn
   pulses: 4
   range_cells: 14
 
@@ -16,13 +16,14 @@ radar_features:
   out_channels: 64
 
 spatial_graph:
-  type: local_3
-  k: 1
-  out_channels: 128
+  type: original_stfe
+  stage1_out_channels: 128
+  stage2_out_channels: 512
 
 temporal:
-  type: convgru_baseline
-  hidden_channels: 256
+  type: stgnn_tfe
+  stage1_out_channels: 256
+  stage2_out_channels: 1024
   out_channels: 1024
 
 clutter_gate:
@@ -32,9 +33,7 @@ detection_head:
   hidden_channels: 512
 
 loss:
-  type: pfa_aware
-  tail_fraction: 0.01
-  tail_weight: 0.1
+  type: cross_entropy
 
 train:
   epochs: 50

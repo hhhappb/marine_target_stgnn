@@ -1,28 +1,29 @@
 paths:
   data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related
-  save_dir: paper_modules/results/radar_feature
+  save_dir: paper_modules/results/feature_replacement_iq_amp_phase_diffs
 
 ipix:
   polarizations: [hh, hv, vv, vh]
 
 model:
-  name: experimental_stgnn
+  name: sfe_replacement_stgnn
   pulses: 4
   range_cells: 14
 
 radar_features:
   type: real_imag_phase_amp_diffs
-  hidden_channels: 48
+  hidden_channels: 32
   out_channels: 64
 
 spatial_graph:
-  type: local_3
-  k: 1
-  out_channels: 128
+  type: original_stfe
+  stage1_out_channels: 128
+  stage2_out_channels: 512
 
 temporal:
-  type: convgru_baseline
-  hidden_channels: 256
+  type: stgnn_tfe
+  stage1_out_channels: 256
+  stage2_out_channels: 1024
   out_channels: 1024
 
 clutter_gate:

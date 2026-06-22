@@ -1,0 +1,46 @@
+paths:
+  data_dir: datasets/ipix_dartmouth/processed/window16_stride4_related
+  save_dir: paper_modules/results/real_imag_sfe_replacement_original_sfe_p16
+
+ipix:
+  polarizations: [hh, hv, vv, vh]
+
+model:
+  name: sfe_replacement_stgnn
+  pulses: 16
+  range_cells: 14
+
+radar_features:
+  type: real_imag
+  hidden_channels: 32
+  out_channels: 64
+
+spatial_graph:
+  type: original_stfe
+  stage1_out_channels: 128
+  stage2_out_channels: 512
+
+temporal:
+  type: stgnn_tfe
+  stage1_out_channels: 256
+  stage2_out_channels: 1024
+  out_channels: 1024
+
+clutter_gate:
+  enabled: false
+
+detection_head:
+  hidden_channels: 512
+
+loss:
+  type: cross_entropy
+
+train:
+  epochs: 50
+  batch_size: 32
+  learning_rate: 0.001
+  num_workers: 0
+  seed: 42
+
+eval:
+  pfa_values: [0.0001, 0.001, 0.01]

@@ -1,0 +1,22 @@
+name: radar_prior_dynamic_sfe_observation_screening
+description: 比较 P=4/16/32 下 original SFE 与雷达先验动态 SFE 主线替换模块。
+run_root: logs/training
+target_pfa: 0.001
+stop_on_failure: true
+
+configs:
+  - paper_modules/configs/real_imag_sfe_replacement_original_sfe.yaml
+  - paper_modules/configs/real_imag_sfe_replacement_radar_prior_dynamic_sfe.yaml
+  - paper_modules/configs/real_imag_sfe_replacement_original_sfe_p16.yaml
+  - paper_modules/configs/real_imag_sfe_replacement_radar_prior_dynamic_sfe_p16.yaml
+  - paper_modules/configs/real_imag_sfe_replacement_original_sfe_p32.yaml
+  - paper_modules/configs/real_imag_sfe_replacement_radar_prior_dynamic_sfe_p32.yaml
+
+seeds: [42]
+
+overrides:
+  epochs: 10
+  batch_size: 64
+  num_workers: 0
+  max_train_windows: 512
+  max_test_windows_per_file: 20

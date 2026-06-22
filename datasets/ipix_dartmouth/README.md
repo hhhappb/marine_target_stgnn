@@ -19,4 +19,4 @@ python scripts/preprocess_ipix.py --dry-run
 python scripts/preprocess_ipix.py --window 4 --stride 4
 ```
 
-The current `paper_model.STGNNDetector` collapses the temporal axis with two stride-2 temporal layers, so `--window 4` is the compatible default.
+The current `models.STGNNDetector` baseline collapses the temporal axis with two stride-2 temporal layers, so `--window 4` is the compatible default.

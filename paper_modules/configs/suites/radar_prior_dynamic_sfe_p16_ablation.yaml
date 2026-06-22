@@ -1,0 +1,21 @@
+name: radar_prior_dynamic_sfe_p16_ablation
+description: P=16 下拆分雷达先验动态图 SFE 的静态距离先验、局部动态边和非局部动态补边贡献。
+run_root: logs/training
+target_pfa: 0.001
+stop_on_failure: true
+
+configs:
+  - paper_modules/configs/real_imag_sfe_replacement_original_sfe_p16.yaml
+  - paper_modules/configs/real_imag_sfe_replacement_radar_prior_dynamic_sfe_p16.yaml
+  - paper_modules/configs/real_imag_sfe_replacement_radar_prior_dynamic_sfe_p16_no_nonlocal.yaml
+  - paper_modules/configs/real_imag_sfe_replacement_radar_prior_dynamic_sfe_p16_static_only.yaml
+  - paper_modules/configs/real_imag_sfe_replacement_radar_prior_dynamic_sfe_p16_dynamic_only.yaml
+
+seeds: [42]
+
+overrides:
+  epochs: 10
+  batch_size: 64
+  num_workers: 0
+  max_train_windows: 512
+  max_test_windows_per_file: 20

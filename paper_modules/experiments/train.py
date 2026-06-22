@@ -165,7 +165,11 @@ def load_checkpoint(path: Path, model: nn.Module, device: torch.device) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train configurable paper ST-GNN modules on IPIX windows.")
-    parser.add_argument("--config", type=Path, default=Path("paper_modules/configs/baseline.yaml"))
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("paper_modules/configs/real_imag_sfe_replacement_original_sfe.yaml"),
+    )
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--max-train-windows", type=int, default=None)

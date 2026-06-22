@@ -5,6 +5,7 @@ import torch.nn as nn
 from .amplitude_phase import AmplitudePhaseFeatures
 from .doppler_stats import DopplerStatsFeatures
 from .phase_diffs import PhaseAmplitudeDiffFeatures
+from .pl_rph import RealImagPLRPHFeatures
 from .real_imag import RealImagFeatures
 
 
@@ -14,6 +15,8 @@ RADAR_FEATURES: dict[str, type[nn.Module]] = {
     "real_imag_amp_phase": AmplitudePhaseFeatures,
     "real_imag_phase_amp_diffs": PhaseAmplitudeDiffFeatures,
     "phase_amp_diffs": PhaseAmplitudeDiffFeatures,
+    "real_imag_pl_rph": RealImagPLRPHFeatures,
+    "pl_rph": RealImagPLRPHFeatures,
     "radar_prior_full": DopplerStatsFeatures,
     "full": DopplerStatsFeatures,
 }

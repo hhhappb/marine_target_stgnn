@@ -1,0 +1,18 @@
+name: sfe_replacement_spatial_graph_screening
+description: real_imag 输入下，严格按 ST-GNN 两级 SFE/TFE 骨架比较空间图替换效果。
+run_root: logs/training
+target_pfa: 0.001
+stop_on_failure: true
+
+configs:
+  - paper_modules/configs/real_imag_sfe_replacement_original_sfe.yaml
+  - paper_modules/configs/real_imag_sfe_replacement_radar_prior_dynamic_sfe.yaml
+
+seeds: [42]
+
+overrides:
+  epochs: 10
+  batch_size: 64
+  num_workers: 2
+  max_train_windows: 512
+  max_test_windows_per_file: 20

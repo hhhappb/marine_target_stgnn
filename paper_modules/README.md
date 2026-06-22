@@ -1,65 +1,70 @@
 # 论文模块实验包说明
 
-这个目录专门放新论文实验模块，原则是：
+`paper_modules/` 只放严格对齐论文 ST-GNN 主干的可替换实验模块。当前主线不是重新设计一条模型流水线，而是在论文结构中做受控替换：
 
 ```text
-一个研究思路 -> 一个独立代码文件 -> 一个可配置实验
+Feature -> SFE1 -> TFE1 -> SFE2 -> TFE2 -> DetectionHead
 ```
 
-原始 `models/st_gnn.py` 保持不动，作为已经复现成功的 ST-GNN baseline。新思路都放在 `paper_modules/` 中，通过 YAML 配置切换。
+## 主线入口
 
-## 思路与代码对应关系
-
-| 研究思路 | 代码文件 | 典型配置 |
+| 位置 | 文件 | 作用 |
 |---|---|---|
-| 原 ST-GNN 输入：只用实部/虚部 | `models/modules/radar_features/real_imag.py` | `configs/baseline.yaml` |
-| 幅相输入：加入幅度、相位正余弦 | `models/modules/radar_features/amplitude_phase.py` | `configs/radar_feature.yaml` |
-| 幅相稳定性：加入相邻脉冲幅度差、相位差 | `models/modules/radar_features/phase_diffs.py` | `configs/radar_feature.yaml` |
-| Doppler 先验：加入慢时间 FFT 统计 | `models/modules/radar_features/doppler_stats.py` | `configs/full_model.yaml` |
-| 原 ST-GNN 空间图：固定相邻距离单元 | `models/modules/spatial_graphs/local_range.py` | `configs/baseline.yaml` |
-| 纯动态空间图：全距离单元注意力 | `models/modules/spatial_graphs/dynamic_attention.py` | `spatial_graph.type: pure_dynamic` |
-| 距离衰减空间图：远距离边受惩罚 | `models/modules/spatial_graphs/distance_decay.py` | `spatial_graph.type: distance_dynamic` |
-| 雷达先验动态图：局部邻接 + 距离衰减 + 特征相似 | `models/modules/spatial_graphs/prior_dynamic.py` | `configs/dynamic_spatial_graph.yaml` |
-| 原 ST-GNN 时间处理：卷积门控压缩 | `models/modules/temporal_modules/convgru_baseline.py` | `configs/baseline.yaml` |
-| 多尺度时间卷积：短/中/长时间感受野 | `models/modules/temporal_modules/multiscale_tcn.py` | `configs/temporal_graph.yaml` |
-| Range migration 时间混合：允许跨邻近距离单元传播 | `models/modules/temporal_modules/range_migration.py` | `configs/range_migration_temporal.yaml` |
-| 时间消融：只做脉冲维平均池化 | `models/modules/temporal_modules/temporal_pool.py` | `temporal.type: mean_pool` |
-| 无杂波门控基线 | `models/modules/clutter_gates/identity.py` | `clutter_gate.enabled: false` |
-| 局部海杂波统计门控：抑制疑似 sea spike | `models/modules/clutter_gates/local_statistics.py` | `configs/clutter_gate.yaml` |
-| 标准交叉熵训练目标 | `losses/cross_entropy.py` | `configs/baseline.yaml` |
-| Pfa-aware loss：惩罚杂波高分尾部 | `losses/pfa_aware.py` | `configs/pfa_aware_loss.yaml` |
+| SFE 替换骨架 | `models/sfe_replacement_stgnn.py` | 保持两级 SFE/TFE 顺序，只替换 SFE 实现 |
+| 原 SFE 复现 | `models/modules/spatial_graphs/original_stfe.py` | 固定相邻距离图 + additive GAT |
+| 空间图候选 | `models/modules/spatial_graphs/` | 作为 SFE1/SFE2 的替换实现 |
+| 输入特征候选 | `models/modules/radar_features/` | 只能在论文 FT/输入特征位置做受控替换 |
+
+已删除旧的 `ExperimentalSTGNN` 自定义骨架和对应配置。旧骨架结果不能作为正式实验结论。
+
+## 当前有效配置
+
+| 实验 | 配置 |
+|---|---|
+| 原 SFE 对齐基线 | `configs/real_imag_sfe_replacement_original_sfe.yaml` |
+| 雷达先验动态图替换 SFE | `configs/real_imag_sfe_replacement_radar_prior_dynamic_sfe.yaml` |
+| 原 SFE 观察时间对照 | `configs/real_imag_sfe_replacement_original_sfe_p16.yaml`、`configs/real_imag_sfe_replacement_original_sfe_p32.yaml` |
+| 雷达先验动态图观察时间对照 | `configs/real_imag_sfe_replacement_radar_prior_dynamic_sfe_p16.yaml`、`configs/real_imag_sfe_replacement_radar_prior_dynamic_sfe_p32.yaml` |
+| 空间替换快筛 suite | `configs/suites/sfe_replacement_spatial_graph_screening.yaml` |
+| 观察时间快筛 suite | `configs/suites/radar_prior_dynamic_sfe_observation_screening.yaml` |
+| 原 I/Q 输入通道 | `configs/feature_replacement_original_iq.yaml` |
+| I/Q + 幅相输入通道 | `configs/feature_replacement_iq_amp_phase.yaml` |
+| I/Q + 幅相差分输入通道 | `configs/feature_replacement_iq_amp_phase_diffs.yaml` |
+| 输入通道快筛 suite | `configs/suites/feature_replacement_input_channel_screening.yaml` |
 
 ## 统一接口
-
-所有模型变体都保持同一个接口：
 
 ```python
 logits = model(E_complex)
 ```
 
-其中：
-
 ```text
-E_complex: [B, P, N]    # 复数雷达回波
-logits:    [B, 2, N]    # 每个距离单元的杂波/目标二分类 logits
+E_complex: [B, P, N]
+logits:    [B, 2, N]
 ```
 
 ## 常用命令
 
-运行单个实验：
+运行原 SFE 对齐基线：
 
 ```powershell
-.\.venv\Scripts\python.exe paper_modules\experiments\train.py --config paper_modules\configs\baseline.yaml
+.\.venv\Scripts\python.exe paper_modules\experiments\train.py --config paper_modules\configs\real_imag_sfe_replacement_original_sfe.yaml
 ```
 
-快速小样本试跑：
+运行 SFE 替换快筛：
 
 ```powershell
-.\.venv\Scripts\python.exe paper_modules\experiments\train.py --config paper_modules\configs\full_model.yaml --epochs 1 --max-train-windows 64 --max-test-windows-per-file 5 --no-progress --log-interval 1
+.\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --suite paper_modules\configs\suites\sfe_replacement_spatial_graph_screening.yaml
 ```
 
-预览批量消融命令：
+运行输入通道替换快筛：
 
 ```powershell
-.\.venv\Scripts\python.exe paper_modules\experiments\run_ablation.py --configs paper_modules\configs\baseline.yaml paper_modules\configs\radar_feature.yaml --dry-run
+.\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --suite paper_modules\configs\suites\feature_replacement_input_channel_screening.yaml
+```
+
+单个替换模块小样本验证：
+
+```powershell
+.\.venv\Scripts\python.exe paper_modules\experiments\train.py --config paper_modules\configs\real_imag_sfe_replacement_radar_prior_dynamic_sfe.yaml --epochs 1 --max-train-windows 64 --max-test-windows-per-file 5 --no-progress --log-interval 1
 ```
