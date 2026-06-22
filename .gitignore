@@ -30,6 +30,9 @@ checkpoints/
 # Large raw/processed datasets
 *.cdf
 *.npz
+datasets/**/raw/
+datasets/**/processed/
+data/**/*.npz
 
 # Generated reports and figures
 reports/figures/
