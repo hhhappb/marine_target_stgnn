@@ -358,13 +358,15 @@ def main() -> None:
     save_dir = Path(get_config_value(config, "paths.save_dir"))
     eval_protocol = str(config.get("eval", {}).get("protocol", "per_file_pol"))
     dataset_type = str(config.get("dataset", {}).get("type", "ipix_window"))
-    pols = get_config_value(config, "ipix.polarizations")
+    dataset_cfg = config.get("dataset", {})
+    pols = dataset_cfg.get("polarizations", get_config_value(config, "ipix.polarizations"))
+    sources = _as_list(dataset_cfg.get("sources", dataset_cfg.get("source")))
 
     train_files: list[Path] = []
     test_files: list[Path] = []
     if dataset_type == "ipix_window":
-        train_files = list_split_files(data_dir, "train", pols)
-        test_files = list_split_files(data_dir, "test", pols)
+        train_files = list_split_files(data_dir, "train", list(pols), sources=sources)
+        test_files = list_split_files(data_dir, "test", list(pols), sources=sources)
         if not train_files:
             raise SystemExit(f"No train files found under {data_dir}")
         if not test_files:
@@ -387,7 +389,7 @@ def main() -> None:
     print(f"Device: {device} | Data dir: {data_dir}", flush=True)
     print(f"Dataset: {dataset_type} | Eval protocol: {eval_protocol}", flush=True)
     if dataset_type == "ipix_window":
-        print(f"Train files: {len(train_files)} | Test files: {len(test_files)} | Pols: {pols}", flush=True)
+        print(f"Train files: {len(train_files)} | Test files: {len(test_files)} | Sources: {sources or 'all'} | Pols: {pols}", flush=True)
     else:
         print(f"Train file: {data_dir / 'train.npz'} | Test SCR files: {len(test_files)}", flush=True)
     print("=" * 72, flush=True)
@@ -497,6 +499,14 @@ def _metrics(correct: int, total_bins: int, tp: int, fp: int, tn: int, fn: int) 
 def _pd_pf(counts: dict[str, int]) -> dict[str, float]:
     tp, fn, fp, tn = counts["TP"], counts["FN"], counts["FP"], counts["TN"]
     return {"PD": tp / (tp + fn) if (tp + fn) else 0.0, "PF": fp / (fp + tn) if (fp + tn) else 0.0}
+
+
+def _as_list(value: Any) -> list[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return [value]
+    return [str(item) for item in value]
 
 
 if __name__ == "__main__":

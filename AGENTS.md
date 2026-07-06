@@ -162,7 +162,7 @@ target_pfa = 0.001
 当前项目的实验目标以论文 Section IV 为准，至少覆盖以下实验。新增模型只有在这些实验口径下表现更好，才算真正超过论文 ST-GNN。
 
 1. IPIX Fig. 7 主实验  
-   14 个 IPIX 数据集、四极化 `HH/HV/VV/VH`；每个数据集每个极化前 60% range profiles 训练，后 40% 测试；`Pfa=0.001`；报告每个 label、每个极化的 `PD`。
+   14 个 IPIX 数据集、四极化 `HH/HV/VV/VH`；每个数据集每个极化前 60% range profiles 训练，后 40% 测试；`Pfa=0.001`；报告每个 label、每个极化的 `PD`。严格 Fig. 7 对齐必须按 `dataset × polarization` 分别训练独立 detector，即 56 个独立训练/评估单元；把 56 个 train 段 pooled 到一个模型只能作为诊断或筛选结果，禁止直接与论文 Fig. 7 数字比较并归因为模型优化。
 
 2. SDRDSP 模拟目标 SCR 曲线 Fig. 9  
    训练背景 `20210106155330_01_staring`，测试背景 `20210106155432_01_staring`；训练 SCR `-12 dB` 到 `14 dB`，步长 `2 dB`；测试 SCR `-24 dB` 到 `14 dB`，步长 `2 dB`；报告 `Pfa=0.0001, 0.001, 0.01` 下的 `PD-SCR` 曲线。
@@ -254,6 +254,13 @@ num_clutter_bins_for_threshold = ...
 - 是否与论文 Fig. 7 口径一致，以及不一致项。
 
 不允许通过改变标签定义、泄漏测试统计量或筛掉困难极化来提升指标。与论文 Fig. 7 或其他论文对比时，必须说明标签口径、阈值来源、数据切分和目标 Pfa。
+
+任何声称“超过论文 Fig. 7 ST-GNN”的结论，必须同时满足：
+
+- 训练组织为每个 `dataset × polarization` 独立 detector，而不是 pooled 训练；
+- 与冻结 baseline 或 `original_stgnn` 在同一数据、同一预处理、同一标签、同一阈值、同一 seed 下做单变量对照；
+- 报告每个独立 detector 的配置、checkpoint、threshold_source、actual PF、PD 和论文数字化值；
+- pooled 训练结果只能写作 `pooled_diagnostic`，不得作为模型模块优化的直接证据。
 
 ## 8. 数据、日志与产物
 

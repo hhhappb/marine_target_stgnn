@@ -16,11 +16,14 @@ def seed_everything(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def list_split_files(data_dir: Path, split: str, pols: list[str]) -> list[Path]:
+def list_split_files(data_dir: Path, split: str, pols: list[str], sources: list[str] | None = None) -> list[Path]:
     files: list[Path] = []
+    source_set = set(sources) if sources is not None else None
     for pol in pols:
         files.extend(data_dir.glob(f"*__{pol}__{split}.npz"))
-    return sorted(files)
+    if source_set is None:
+        return sorted(files)
+    return sorted(path for path in files if parse_source_and_pol(path)[0] in source_set)
 
 
 def parse_source_and_pol(path: Path) -> tuple[str, str]:

@@ -31,6 +31,7 @@ Feature -> SFE1 -> TFE1 -> SFE2 -> TFE2 -> DetectionHead
 | I/Q + 幅相输入通道 | `configs/feature_replacement_iq_amp_phase.yaml` |
 | I/Q + 幅相差分输入通道 | `configs/feature_replacement_iq_amp_phase_diffs.yaml` |
 | 原始 ST-GNN SDRDSP SCR 复现 | `configs/repro_original_stgnn_scr256.yaml` |
+| IPIX Fig.7 困难点 per-file 对照 | `configs/suites/per_file_fig7_hardpoints_b.yaml` |
 | 输入通道快筛 suite | `configs/suites/feature_replacement_input_channel_screening.yaml` |
 
 ## 统一接口
@@ -74,4 +75,10 @@ logits:    [B, 2, N]
 
 ```powershell
 .\.venv\Scripts\python.exe paper_modules\experiments\train.py --config paper_modules\configs\repro_original_stgnn_scr256.yaml --epochs 2 --no-progress --log-interval 10
+```
+
+运行 IPIX Fig.7 困难点 per-file 对照：
+
+```powershell
+.\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --suite paper_modules\configs\suites\per_file_fig7_hardpoints_b.yaml
 ```

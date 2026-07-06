@@ -35,3 +35,9 @@ SDRDSP SCR reproduction smoke:
 ```powershell
 .\.venv\Scripts\python.exe paper_modules\experiments\train.py --config paper_modules\configs\repro_original_stgnn_scr256.yaml --epochs 2 --no-progress --log-interval 10
 ```
+
+IPIX Fig.7 hard-point per-file protocol check:
+
+```powershell
+.\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --suite paper_modules\configs\suites\per_file_fig7_hardpoints_b.yaml
+```

@@ -51,9 +51,12 @@ reports/新空间新时间模块IPIX论文对比实验报告.md
 | FAR/Pfa 阈值 | 训练集 clutter 样本的 `o0` 升序分位 |
 | Fig.7 Pfa | 0.001 |
 
-待澄清的协议点：
+已明确的关键协议点：
 
-- Fig.7 是每个 dataset×polarization 单独训练一个 detector，还是把所有 IPIX train samples pooled 后训练一个 detector；
+- Fig.7 应按每个 `dataset × polarization` 单独训练 detector；当前 pooled 训练与论文协议不一致，不能直接与论文 Fig.7 数字做优化归因。
+
+仍需澄清的协议点：
+
 - 论文中 official auto-processing 是否等价于全文件统计处理，还是官方已处理后的数据直接使用；
 - target label 是否包含 PRC+SRC，还是只评价 PRC。
 
@@ -168,6 +171,8 @@ paper_modules/configs/sfe_tfe_replacement_radar_diffbic.yaml
 
 - 如果 per-file 仍高，pooled 不是主要原因；
 - 如果 leave-one-file-out 明显下降，说明存在文件指纹依赖。
+
+当前状态：该风险已升级为结论口径阻断项。论文 Fig.7 是 per `dataset × polarization` 独立 detector，当前 pooled 结果只能作为诊断，不能作为“模块优化超过论文”的正式证据。
 
 ### H2：结果高是因为全文件 auto-processing 泄漏测试段统计
 
@@ -310,7 +315,7 @@ paper_modules/configs/sfe_tfe_replacement_radar_diffbic.yaml
 
 当前结果可以表述为：
 
-> 在当前 pooled IPIX Fig.7-style 设置、related target label、当前 auto-processing 和报告中的 train_clutter 阈值口径下，新空间+新时间模型取得极高 PD。但由于报告 checkpoint 与当前代码不可追溯、训练组织和阈值实现仍需严格复核，该结果目前应视为诊断结果，不能直接作为严格复现并超过论文 ST-GNN 的正式结论。
+> 在当前 pooled IPIX Fig.7-style 设置、related target label、当前 auto-processing 和报告中的 train_clutter 阈值口径下，新空间+新时间模型取得极高 PD。但训练组织与论文 Fig.7 的 per dataset×polarization 独立 detector 协议不一致，该结果只能视为 pooled_diagnostic，不能作为严格复现并超过论文 ST-GNN 的正式结论，也不能把差值归因为模块优化。
 
 暂时不建议表述为：
 

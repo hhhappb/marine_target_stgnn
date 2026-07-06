@@ -1,0 +1,32 @@
+paths:
+  data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related
+  save_dir: logs/training/per_file_fig7_hardpoints/original_stgnn_label01_vv
+
+dataset:
+  type: ipix_window
+  data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related
+  sources: [19931107_135603_starea]
+  polarizations: [vv]
+
+ipix:
+  polarizations: [vv]
+
+model:
+  name: original_stgnn
+  pulses: 4
+  range_cells: 14
+
+loss:
+  type: cross_entropy
+
+train:
+  epochs: 50
+  batch_size: 512
+  learning_rate: 0.001
+  num_workers: 0
+  seed: 42
+
+eval:
+  protocol: per_file_pol
+  threshold_source: train_clutter
+  pfa_values: [0.001]

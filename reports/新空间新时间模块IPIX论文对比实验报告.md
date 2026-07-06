@@ -1,5 +1,7 @@
 # 新空间新时间模块 IPIX 论文对比实验报告
 
+> **紧急更正（2026-07-06）**：本报告原先把 pooled 训练结果与论文 Fig.7 数字化曲线直接对比，并把差值解释为新空间/新时间模块优化，这是不成立的。论文 Fig.7 应按每个 `dataset × polarization` 训练独立 detector；本报告结果来自一个 pooled detector，训练组织不一致。因此下文所有“相同设置下超过论文”“提升来自模块优化”的表述降级为历史诊断记录，不能作为正式论文结论。后续必须使用 per-file 独立 detector 的 baseline vs 新模块单变量对照重新归因。
+
 ## 实验目的
 
 本报告整理新空间模块 + 新时间模块在 IPIX Fig.7-style 实验中的结果，并与参考论文 `Marine Target Detection via Spatial-Temporal Graph Neural Network` 的 Fig.7 中 ST-GNN detector 曲线进行对比。
@@ -27,7 +29,7 @@
 
 ![新空间新时间与论文 ST-GNN Fig7 对比](figures/新空间新时间_与论文STGNN_Fig7对比_train_clutter_pfa_0.001.png)
 
-该图中红色虚线为论文 Fig.7 中 ST-GNN detector 的近似数字化曲线，蓝色实线为本实验的新空间 + 新时间模型结果。可以看到，新模型在四个极化下整体更接近 1.0，尤其在论文 ST-GNN 曲线明显下探的困难数据集上提升更明显。
+该图中红色虚线为论文 Fig.7 中 ST-GNN detector 的近似数字化曲线，蓝色实线为本实验的新空间 + 新时间 pooled detector 结果。由于训练组织不同，该图只能说明 pooled 设置下分数很高，不能说明模型模块在论文协议下优于 ST-GNN。
 
 ## 本模型 Fig.7 风格图
 
@@ -67,7 +69,7 @@
 | 6 | 19931109_191449_starea | VH | 0.791 | 0.999924 | +0.208924 | 0.006138 |
 | 12 | 19931118_162155_stareC0000 | HH | 0.865 | 1.000000 | +0.135000 | 0.000038 |
 
-整体来看，`VV` 极化提升最大，平均提升约 `+0.0963`。这说明新模块主要补强了原 ST-GNN 在困难极化和困难海况下的检测短板。
+整体来看，`VV` 极化的数字差值最大。但该差值混入 pooled 训练、固定标签位置、预处理统计边界、标签口径等因素，不能归因为新模块补强了原 ST-GNN。
 
 ## 两种阈值分割方式对比
 
@@ -117,9 +119,9 @@ eval clutter bins = 7,497,204
 
 两者差异说明：训练集与测试集 clutter 的 `o0` 分布存在一定偏移。train_clutter 阈值更高，使模型在测试集上更容易判为 target，因此 PD 略高，但 actual PF 也升高到 `0.002243`。报告时应优先使用 train_clutter 口径，并同时报告 actual PF。
 
-## 为什么会取得明显提升
+## 原“为什么会取得明显提升”解释已撤回
 
-本次提升不是单纯来自更大的模型，而是空间与时间模块补强了原 ST-GNN 在困难海况下的两个关键弱点。
+以下机制解释只可作为候选假设，不能由本报告的 pooled 对比数据支持。要证明这些机制有效，必须在 per `dataset × polarization` 独立 detector 协议下比较冻结 baseline 与新模块，且保持数据、预处理、标签、阈值和 seed 一致。
 
 1. 空间模块引入雷达先验动态图  
    原 ST-GNN 的空间建模更依赖学习到的图注意力关系；新空间模块引入静态距离先验、局部动态相似边和少量 top-k 非局部补边，使 range cell 之间的信息传播更符合海杂波小目标的空间延展特性。对于 `VV`、`HH` 中容易受海杂波和海尖峰干扰的数据集，雷达先验图能减少无约束动态图被杂波相似性误导的问题。
@@ -135,7 +137,7 @@ eval clutter bins = 7,497,204
 
 ## 结论与边界
 
-在 IPIX Fig.7-style 的相同目标虚警率设置下，新空间 + 新时间模型表现出明显优于论文 ST-GNN 曲线的检测概率趋势：
+在当前 pooled IPIX Fig.7-style 诊断设置下，新空间 + 新时间模型表现出接近 1.0 的检测概率：
 
 ```text
 Paper ST-GNN digitized mean PD ≈ 0.942821
@@ -143,14 +145,14 @@ New SFE+TFE mean PD ≈ 0.999800
 平均提升 ≈ +0.056979
 ```
 
-最主要的提升来自 `VV/HH` 困难极化和论文 ST-GNN 曲线明显下探的数据集。该结果支持“雷达先验动态图空间建模 + 差分增强双向时序协同注意力时间建模”的合理性。
+这些数字不能和论文 Fig.7 直接做优化归因。最主要的下一步是按 per-file 独立 detector 协议复跑 hard points，并与冻结 baseline 做单变量对照。
 
 同时需要保留两个结论边界：
 
-1. 论文 ST-GNN 数值来自 Fig.7 图片近似数字化，不是论文作者提供的精确原始表格。
-2. train_clutter 口径下 `target Pfa=0.001` 对应的测试集实际 `PF=0.002243`，高于目标虚警率。正式论文表述应同时报告 `target Pfa`、`actual PF`、`threshold_source` 和阈值。
+1. 训练组织与论文 Fig.7 不一致：本报告是 pooled detector，论文协议应为 per `dataset × polarization` 独立 detector。
+2. 论文 ST-GNN 数值来自 Fig.7 图片近似数字化，不是论文作者提供的精确原始表格。
+3. train_clutter 口径下 `target Pfa=0.001` 对应的测试集实际 `PF=0.002243`，高于目标虚警率。正式论文表述应同时报告 `target Pfa`、`actual PF`、`threshold_source` 和阈值。
 
-因此，推荐最终表述为：
+因此，本报告推荐表述修正为：
 
-> 在与参考论文 Fig.7 相同的 IPIX 14 数据集、四极化、P=4、目标 Pfa=0.001 设置下，新空间 + 新时间模型取得 `PD=0.999796`。与论文 Fig.7 中 ST-GNN detector 的近似数字化曲线相比，新模型在多数数据集和极化上保持更稳定的高检测概率，尤其在 `VV/HH` 困难场景中提升明显。本文同时报告 train_clutter 阈值迁移到测试集后的实际虚警率为 `PF=0.002243`。
-
+> 在 pooled IPIX Fig.7-style 诊断设置、related label、train_clutter 阈值口径下，新空间 + 新时间模型取得 `PD=0.999796`、`PF=0.002243`。由于训练组织与论文 Fig.7 的 per dataset×polarization 独立 detector 协议不一致，该结果不能作为严格超过论文 ST-GNN 的结论，也不能把与论文数字化曲线的差值归因为模块优化。
