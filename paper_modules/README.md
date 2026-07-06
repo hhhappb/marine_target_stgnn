@@ -32,6 +32,7 @@ Feature -> SFE1 -> TFE1 -> SFE2 -> TFE2 -> DetectionHead
 | I/Q + 幅相差分输入通道 | `configs/feature_replacement_iq_amp_phase_diffs.yaml` |
 | 原始 ST-GNN SDRDSP SCR 复现 | `configs/repro_original_stgnn_scr256.yaml` |
 | IPIX Fig.7 困难点 per-file 对照 | `configs/suites/per_file_fig7_hardpoints_b.yaml` |
+| IPIX Fig.7 困难点 range-roll 增广对照 | `configs/suites/per_file_fig7_hardpoints_shift_aug_b.yaml` |
 | IPIX Fig.7 困难点三臂对照 | `configs/suites/per_file_fig7_hardpoints_three_arm.yaml` |
 | 输入通道快筛 suite | `configs/suites/feature_replacement_input_channel_screening.yaml` |
 
@@ -88,6 +89,13 @@ logits:    [B, 2, N]
 
 ```powershell
 .\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --suite paper_modules\configs\suites\per_file_fig7_hardpoints_b.yaml --validate-only
+```
+
+运行 IPIX Fig.7 困难点 range-roll 增广对照：
+
+```powershell
+.\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --suite paper_modules\configs\suites\per_file_fig7_hardpoints_shift_aug_b.yaml --validate-only
+.\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --suite paper_modules\configs\suites\per_file_fig7_hardpoints_shift_aug_b.yaml
 ```
 
 运行 IPIX Fig.7 困难点三臂对照：

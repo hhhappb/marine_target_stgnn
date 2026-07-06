@@ -537,6 +537,7 @@ def run_metadata(
         "dataset_data_dir": str(dataset_cfg.get("data_dir", data_dir)),
         "sources": sources or [],
         "polarizations": _as_list(pols) or [],
+        "train_augmentation": dataset_cfg.get("augment", {}),
         "num_train_files": len(train_files),
         "num_test_files": len(test_files),
         "train_files": [str(path) for path in train_files],

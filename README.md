@@ -47,3 +47,10 @@ Validate the hard-point configs before launching runs:
 ```powershell
 .\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --suite paper_modules\configs\suites\per_file_fig7_hardpoints_b.yaml --validate-only
 ```
+
+IPIX Fig.7 hard-point per-file run with train-time range-roll augmentation:
+
+```powershell
+.\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --suite paper_modules\configs\suites\per_file_fig7_hardpoints_shift_aug_b.yaml --validate-only
+.\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --suite paper_modules\configs\suites\per_file_fig7_hardpoints_shift_aug_b.yaml
+```

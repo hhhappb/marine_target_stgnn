@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -47,11 +48,18 @@ def load_ipix_arrays(path: Path, max_windows: int | None = None, rng: np.random.
 
 
 class IpixWindowDataset(Dataset):
-    def __init__(self, files: list[Path], max_windows: int | None = None, seed: int = 42):
+    def __init__(
+        self,
+        files: list[Path],
+        max_windows: int | None = None,
+        seed: int = 42,
+        range_roll: dict[str, Any] | None = None,
+    ):
         self.files = files
         self.x_parts: list[np.ndarray] = []
         self.y_parts: list[np.ndarray] = []
         self.rng = np.random.default_rng(seed)
+        self._range_roll = _parse_range_roll(range_roll)
         remaining = max_windows
 
         for path in files:
@@ -78,6 +86,7 @@ class IpixWindowDataset(Dataset):
         self.real = torch.from_numpy(np.ascontiguousarray(x.real, dtype=np.float32))
         self.imag = torch.from_numpy(np.ascontiguousarray(x.imag, dtype=np.float32))
         self.y = torch.from_numpy(np.ascontiguousarray(y, dtype=np.int64))
+        self._range_roll = _finalize_range_roll(self._range_roll, int(self.y.shape[1]))
 
         self.x_parts = []
         self.y_parts = []
@@ -86,7 +95,44 @@ class IpixWindowDataset(Dataset):
         return int(self.y.shape[0])
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        return self.real[idx], self.imag[idx], self.y[idx]
+        real = self.real[idx]
+        imag = self.imag[idx]
+        y = self.y[idx]
+        if self._range_roll["enabled"]:
+            max_shift = int(self._range_roll["max_shift"])
+            shift = int(torch.randint(0, max_shift + 1, (1,)).item())
+            if shift:
+                real = torch.roll(real, shifts=shift, dims=-1)
+                imag = torch.roll(imag, shifts=shift, dims=-1)
+                y = torch.roll(y, shifts=shift, dims=-1)
+        return real, imag, y
 
     def class_weights(self) -> torch.Tensor:
         return self._class_weights.clone()
+
+
+def _parse_range_roll(config: dict[str, Any] | None) -> dict[str, Any]:
+    config = config or {}
+    enabled = bool(config.get("enabled", False))
+    mode = str(config.get("mode", "circular"))
+    if mode != "circular":
+        raise ValueError(f"range_roll.mode 仅支持 circular，实际为 {mode}。")
+    return {
+        "enabled": enabled,
+        "max_shift": config.get("max_shift"),
+        "mode": mode,
+    }
+
+
+def _finalize_range_roll(config: dict[str, Any], range_cells: int) -> dict[str, Any]:
+    if not config["enabled"]:
+        return {**config, "max_shift": 0}
+    if range_cells < 2:
+        raise ValueError("range_roll 需要至少 2 个 range cell。")
+    max_shift = config["max_shift"]
+    if max_shift is None:
+        max_shift = range_cells - 1
+    max_shift = int(max_shift)
+    if max_shift <= 0 or max_shift >= range_cells:
+        raise ValueError(f"range_roll.max_shift 必须在 [1, {range_cells - 1}] 内，实际为 {max_shift}。")
+    return {**config, "max_shift": max_shift}

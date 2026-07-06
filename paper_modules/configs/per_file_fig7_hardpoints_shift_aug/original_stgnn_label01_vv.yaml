@@ -1,0 +1,37 @@
+paths:
+  data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related_stats_train_only
+  save_dir: logs/training/per_file_fig7_hardpoints_shift_aug/original_stgnn_label01_vv
+
+dataset:
+  type: ipix_window
+  data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related_stats_train_only
+  sources: [19931107_135603_starea]
+  polarizations: [vv]
+  augment:
+    range_roll:
+      enabled: true
+      mode: circular
+      max_shift: 13
+
+ipix:
+  polarizations: [vv]
+
+model:
+  name: original_stgnn
+  pulses: 4
+  range_cells: 14
+
+loss:
+  type: cross_entropy
+
+train:
+  epochs: 50
+  batch_size: 512
+  learning_rate: 0.001
+  num_workers: 0
+  seed: 42
+
+eval:
+  protocol: per_file_pol
+  threshold_source: train_clutter
+  pfa_values: [0.001]

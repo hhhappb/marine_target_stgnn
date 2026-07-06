@@ -212,12 +212,14 @@ def config_metadata(config: dict[str, Any]) -> dict[str, Any]:
     sources = _as_list(dataset_cfg.get("sources", dataset_cfg.get("source"))) or []
     paths_data_dir = str(paths_cfg.get("data_dir", ""))
     dataset_data_dir = str(dataset_cfg.get("data_dir", paths_data_dir))
+    augmentation = json.dumps(dataset_cfg.get("augment", {}), sort_keys=True, ensure_ascii=False)
     return {
         "model_name": str(config.get("model", {}).get("name", "")),
         "dataset_type": str(dataset_cfg.get("type", "ipix_window")),
         "data_dir": paths_data_dir,
         "paths_data_dir": paths_data_dir,
         "dataset_data_dir": dataset_data_dir,
+        "train_augmentation": augmentation,
         "sources": sources,
         "source": sources[0] if len(sources) == 1 else "",
         "polarizations": pols,
@@ -231,7 +233,15 @@ def config_metadata(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def comparable_mismatches(candidate: dict[str, Any], baseline: dict[str, Any]) -> list[str]:
-    fields = ["data_dir", "epochs", "batch_size", "learning_rate", "threshold_source", "eval_protocol"]
+    fields = [
+        "data_dir",
+        "train_augmentation",
+        "epochs",
+        "batch_size",
+        "learning_rate",
+        "threshold_source",
+        "eval_protocol",
+    ]
     return [field for field in fields if candidate.get(field) != baseline.get(field)]
 
 

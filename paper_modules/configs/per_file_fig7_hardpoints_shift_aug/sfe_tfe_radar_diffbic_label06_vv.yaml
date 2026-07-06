@@ -1,0 +1,72 @@
+paths:
+  data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related_stats_train_only
+  save_dir: logs/training/per_file_fig7_hardpoints_shift_aug/sfe_tfe_radar_diffbic_label06_vv
+
+dataset:
+  type: ipix_window
+  data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related_stats_train_only
+  sources: [19931109_191449_starea]
+  polarizations: [vv]
+  augment:
+    range_roll:
+      enabled: true
+      mode: circular
+      max_shift: 13
+
+ipix:
+  polarizations: [vv]
+
+model:
+  name: sfe_replacement_stgnn
+  pulses: 4
+  range_cells: 14
+
+radar_features:
+  type: real_imag
+  hidden_channels: 32
+  out_channels: 64
+
+spatial_graph:
+  type: radar_prior_dynamic_sfe
+  stage1_out_channels: 128
+  stage2_out_channels: 512
+  static_gamma: 0.5
+  static_delta: 5
+  static_weight: 0.7
+  dynamic_topk: 2
+  dynamic_temperature: 0.2
+  dropout: 0.1
+
+temporal:
+  type: diff_bicam_tfe
+  stage1_out_channels: 256
+  stage2_out_channels: 1024
+  out_channels: 1024
+  num_heads: 4
+  dropout: 0.1
+  use_diff: true
+  use_coattention: true
+  use_prev: true
+  use_next: true
+  shuffle_diff: false
+
+clutter_gate:
+  enabled: false
+
+detection_head:
+  hidden_channels: 512
+
+loss:
+  type: cross_entropy
+
+train:
+  epochs: 50
+  batch_size: 512
+  learning_rate: 0.001
+  num_workers: 0
+  seed: 42
+
+eval:
+  protocol: per_file_pol
+  threshold_source: train_clutter
+  pfa_values: [0.001]
