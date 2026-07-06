@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 if not os.environ.get("OMP_NUM_THREADS", "1").isdigit():
     os.environ["OMP_NUM_THREADS"] = "1"
 
@@ -20,9 +22,10 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from paper_modules.datasets import build_dataset, list_split_files, load_ipix_arrays, parse_source_and_pol, seed_everything
+from paper_modules.datasets.scr_npz import ScrNpzDataset, list_test_scr_files
 from paper_modules.losses import build_loss
 from paper_modules.models import build_model
-from train_ipix import IpixWindowDataset, list_split_files, load_ipix_arrays, parse_source_and_pol, seed_everything
 from utils.config import get_config_value, load_config
 
 
@@ -213,6 +216,94 @@ def collect_file_scores(
     return records, np.concatenate(clutter_scores)
 
 
+def evaluate_scr_curve(
+    model: nn.Module,
+    data_dir: Path,
+    batch_size: int,
+    device: torch.device,
+    pfa_values: list[float],
+    max_windows_per_scr: int | None = None,
+    max_threshold_windows: int | None = None,
+    seed: int = 42,
+) -> dict[str, object]:
+    model.eval()
+    train_dataset = ScrNpzDataset(data_dir, "train", max_windows=max_threshold_windows, seed=seed)
+    train_o0, train_labels = collect_dataset_scores(model, train_dataset, batch_size, device)
+    threshold_clutter = train_o0[train_labels == 0]
+    if threshold_clutter.size == 0:
+        raise ValueError("SCR train.npz 中没有杂波样本，无法按训练集杂波计算阈值。")
+
+    scr_files = list_test_scr_files(data_dir)
+    if not scr_files:
+        raise ValueError(f"没有找到 SCR 测试文件: {data_dir / 'test_scr_*.npz'}")
+
+    scr_records: list[dict[str, object]] = []
+    for path in scr_files:
+        scr = int(path.stem.replace("test_scr_", ""))
+        dataset = ScrNpzDataset(
+            data_dir,
+            "test",
+            scr=scr,
+            max_windows=max_windows_per_scr,
+            seed=seed,
+            norm=train_dataset.norm,
+        )
+        o0, labels = collect_dataset_scores(model, dataset, batch_size, device)
+        scr_records.append({"scr_db": scr, "o0": o0, "labels": labels})
+
+    results: dict[str, object] = {
+        "protocol": "pd_scr_curve",
+        "threshold_source": "train",
+        "num_test_scr_files": len(scr_records),
+        "num_clutter_bins_for_threshold": int(threshold_clutter.shape[0]),
+        "pfa": {},
+    }
+    ordered = np.sort(threshold_clutter)
+    for pfa in pfa_values:
+        idx = int(np.ceil(pfa * len(ordered))) - 1
+        threshold = float(ordered[max(0, min(idx, len(ordered) - 1))])
+        total = {"TP": 0, "FN": 0, "FP": 0, "TN": 0}
+        per_scr = []
+        for item in scr_records:
+            labels = item["labels"]
+            det = (item["o0"] <= threshold).astype(np.uint8)
+            counts = {
+                "TP": int(((det == 1) & (labels == 1)).sum()),
+                "FN": int(((det == 0) & (labels == 1)).sum()),
+                "FP": int(((det == 1) & (labels == 0)).sum()),
+                "TN": int(((det == 0) & (labels == 0)).sum()),
+            }
+            for key in total:
+                total[key] += counts[key]
+            per_scr.append({"scr_db": item["scr_db"], **_pd_pf(counts), **counts})
+        results["pfa"][str(pfa)] = {"threshold": threshold, **_pd_pf(total), **total, "per_scr": per_scr}
+    return results
+
+
+def collect_dataset_scores(
+    model: nn.Module,
+    dataset,
+    batch_size: int,
+    device: torch.device,
+) -> tuple["np.ndarray", "np.ndarray"]:
+    import numpy as np
+
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+    o0_parts: list[np.ndarray] = []
+    label_parts: list[np.ndarray] = []
+    with torch.no_grad():
+        for real, imag, labels in loader:
+            real = real.to(device, non_blocking=True)
+            imag = imag.to(device, non_blocking=True)
+            logits = model(torch.complex(real, imag))
+            probs = torch.softmax(logits, dim=1)[:, 0, :].cpu().numpy()
+            o0_parts.append(probs)
+            label_parts.append(labels.numpy())
+    if not o0_parts:
+        raise ValueError("数据集为空，无法评估。")
+    return np.concatenate(o0_parts, axis=0), np.concatenate(label_parts, axis=0)
+
+
 def save_checkpoint(path: Path, model: nn.Module, config: dict[str, Any], extra: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"model_state": model.state_dict(), "config": config, **extra}, path)
@@ -222,6 +313,16 @@ def load_checkpoint(path: Path, model: nn.Module, device: torch.device) -> None:
     payload = torch.load(path, map_location=device, weights_only=False)
     state = payload["model_state"] if isinstance(payload, dict) and "model_state" in payload else payload
     model.load_state_dict(state)
+
+
+def write_config_snapshot(path: Path, config: dict[str, Any]) -> None:
+    try:
+        import yaml
+    except ModuleNotFoundError as exc:
+        raise SystemExit("Missing dependency: PyYAML. Install with `python -m pip install PyYAML`.") from exc
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
 
 def parse_args() -> argparse.Namespace:
@@ -255,20 +356,40 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data_dir = Path(get_config_value(config, "paths.data_dir"))
     save_dir = Path(get_config_value(config, "paths.save_dir"))
+    eval_protocol = str(config.get("eval", {}).get("protocol", "per_file_pol"))
+    dataset_type = str(config.get("dataset", {}).get("type", "ipix_window"))
     pols = get_config_value(config, "ipix.polarizations")
-    train_files = list_split_files(data_dir, "train", pols)
-    test_files = list_split_files(data_dir, "test", pols)
-    if not train_files:
-        raise SystemExit(f"No train files found under {data_dir}")
-    if not test_files:
-        raise SystemExit(f"No test files found under {data_dir}")
+
+    train_files: list[Path] = []
+    test_files: list[Path] = []
+    if dataset_type == "ipix_window":
+        train_files = list_split_files(data_dir, "train", pols)
+        test_files = list_split_files(data_dir, "test", pols)
+        if not train_files:
+            raise SystemExit(f"No train files found under {data_dir}")
+        if not test_files:
+            raise SystemExit(f"No test files found under {data_dir}")
+    elif dataset_type == "scr_npz":
+        if not (data_dir / "train.npz").exists():
+            raise SystemExit(f"No SCR train file found under {data_dir}")
+        test_files = list_test_scr_files(data_dir)
+        if not test_files:
+            raise SystemExit(f"No SCR test files found under {data_dir}")
+    else:
+        raise SystemExit(f"Unknown dataset type: {dataset_type}")
 
     model = build_model(config).to(device)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    write_config_snapshot(save_dir / "config.yaml", config)
     print("=" * 72, flush=True)
     print("Paper module ST-GNN training/evaluation", flush=True)
     print(f"Config: {args.config}", flush=True)
     print(f"Device: {device} | Data dir: {data_dir}", flush=True)
-    print(f"Train files: {len(train_files)} | Test files: {len(test_files)} | Pols: {pols}", flush=True)
+    print(f"Dataset: {dataset_type} | Eval protocol: {eval_protocol}", flush=True)
+    if dataset_type == "ipix_window":
+        print(f"Train files: {len(train_files)} | Test files: {len(test_files)} | Pols: {pols}", flush=True)
+    else:
+        print(f"Train file: {data_dir / 'train.npz'} | Test SCR files: {len(test_files)}", flush=True)
     print("=" * 72, flush=True)
 
     if args.eval_only:
@@ -276,7 +397,7 @@ def main() -> None:
             raise SystemExit("--eval-only requires --checkpoint")
         load_checkpoint(args.checkpoint, model, device)
     else:
-        train_dataset = IpixWindowDataset(train_files, max_windows=args.max_train_windows, seed=seed)
+        train_dataset = build_dataset(config, "train", max_windows=args.max_train_windows, seed=seed)
         print(f"Loaded train windows: {len(train_dataset):,}", flush=True)
         print(f"Class weights: {train_dataset.class_weights().tolist()}", flush=True)
         loader = DataLoader(
@@ -320,25 +441,49 @@ def main() -> None:
         save_checkpoint(save_dir / "final_model.pth", model, config, {"best_loss": best_loss, "epoch": epochs})
         load_checkpoint(best_path, model, device)
 
-    results = evaluate_files(
-        model,
-        test_files,
-        int(get_config_value(config, "train.batch_size")),
-        device,
-        get_config_value(config, "eval.pfa_values"),
-        max_windows_per_file=args.max_test_windows_per_file,
-        threshold_files=train_files,
-        threshold_source=str(config.get("eval", {}).get("threshold_source", "test_diagnostic_current_eval")),
-        max_threshold_windows=args.max_train_windows,
-        seed=seed,
-    )
-    save_dir.mkdir(parents=True, exist_ok=True)
+    if eval_protocol == "per_file_pol":
+        if dataset_type != "ipix_window":
+            raise ValueError("eval.protocol=per_file_pol 只支持 dataset.type=ipix_window。")
+        results = evaluate_files(
+            model,
+            test_files,
+            int(get_config_value(config, "train.batch_size")),
+            device,
+            get_config_value(config, "eval.pfa_values"),
+            max_windows_per_file=args.max_test_windows_per_file,
+            threshold_files=train_files,
+            threshold_source=str(config.get("eval", {}).get("threshold_source", "test_diagnostic_current_eval")),
+            max_threshold_windows=args.max_train_windows,
+            seed=seed,
+        )
+    elif eval_protocol == "pd_scr_curve":
+        if dataset_type != "scr_npz":
+            raise ValueError("eval.protocol=pd_scr_curve 只支持 dataset.type=scr_npz。")
+        results = evaluate_scr_curve(
+            model,
+            data_dir,
+            int(get_config_value(config, "train.batch_size")),
+            device,
+            get_config_value(config, "eval.pfa_values"),
+            max_windows_per_scr=args.max_test_windows_per_file,
+            max_threshold_windows=args.max_train_windows,
+            seed=seed,
+        )
+    else:
+        raise ValueError(f"未知 eval.protocol: {eval_protocol}")
+
     results_path = save_dir / "eval_results.json"
     results_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+    metrics_path = save_dir / "metrics.json"
+    metrics_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
     print("\nEvaluation summary", flush=True)
     for pfa, payload in results["pfa"].items():
         print(f"Pfa={pfa} | threshold={payload['threshold']:.8f} | PD={payload['PD']:.4f} | PF={payload['PF']:.6f}", flush=True)
+        if eval_protocol == "pd_scr_curve":
+            for item in payload["per_scr"]:
+                print(f"  SCR={item['scr_db']:>3} dB | PD={item['PD']:.4f} | PF={item['PF']:.6f}", flush=True)
     print(f"Saved results: {results_path}", flush=True)
+    print(f"Saved metrics: {metrics_path}", flush=True)
 
 
 def _metrics(correct: int, total_bins: int, tp: int, fp: int, tn: int, fn: int) -> dict[str, float]:

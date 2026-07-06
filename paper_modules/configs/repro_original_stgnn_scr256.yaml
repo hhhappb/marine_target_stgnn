@@ -1,0 +1,27 @@
+paths:
+  data_dir: data/paper_strict_256
+  save_dir: logs/training/repro_original_stgnn_scr256
+
+dataset:
+  type: scr_npz
+  data_dir: data/paper_strict_256
+
+model:
+  name: original_stgnn
+  pulses: 4
+  range_cells: 256
+
+loss:
+  type: cross_entropy
+
+train:
+  epochs: 500
+  batch_size: 128
+  learning_rate: 0.001
+  num_workers: 0
+  seed: 42
+
+eval:
+  protocol: pd_scr_curve
+  threshold_source: train
+  pfa_values: [0.0001, 0.001, 0.01]
