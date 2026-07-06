@@ -193,7 +193,10 @@ num_clutter_bins_for_threshold = ...
 
 ## 8. 数据、日志与产物
 
-- 原始 `.cdf`、处理后 `.npz`、模型权重 `.pth`、checkpoint、实验结果图和日志默认视为可再生产物，不应随普通代码修改一起提交。
+- 原始 `.cdf`、处理后 `.npz`、模型权重 `.pth`、checkpoint、实验结果图和日志默认视为实验复现资产，不应随普通代码修改一起提交。
+- `logs/training/`、`paper_modules/results/`、`checkpoints/` 是训练完成后的关键产物目录，默认必须保留在本地工作区；未经明确人工确认和可用备份验证，任何清理动作都不得删除、移动或覆盖这些目录及其子文件。
+- “默认不 push” 只表示不随普通源码提交上传到 Git，不表示这些产物可以删除。若需要释放磁盘空间，只能先列出待处理文件、说明对应实验 run/checkpoint、确认已有备份或可重新训练成本，再由人工明确批准后执行。
+- 删除训练产物前必须至少完成以下检查：确认目标路径只位于预期目录；记录 `run_id`、配置文件、checkpoint 路径和指标摘要；确认 `artifacts.txt` 或报告中仍能追溯；必要时先复制到外部备份目录。
 - 小型配置、实验协议、结果摘要 Markdown/CSV 可以保留，但必须能说明生成方式。
 - 新增数据处理逻辑必须写明输出数组 key、shape、标签含义和是否使用训练/测试统计量。
 
@@ -279,8 +282,8 @@ git diff --stat
 默认不 push：
 
 - 原始或处理后数据：`*.cdf`、`*.npz`、`datasets/**/processed/` 新生成目录。
-- 训练日志和运行产物：`logs/training/`、`paper_modules/results/`。
-- 模型权重和 checkpoint：`*.pth`、`*.pt`、`*.ckpt`、`checkpoints/`。
+- 训练日志和运行产物：`logs/training/`、`paper_modules/results/`。这些目录默认不随普通提交上传，但必须保留本地，不得作为垃圾文件清理。
+- 模型权重和 checkpoint：`*.pth`、`*.pt`、`*.ckpt`、`checkpoints/`。这些文件默认不随普通提交上传，但属于实验复现资产，不得未经确认删除。
 - 临时网页、草稿和本地调试文件，例如 `wechat_article.html`、临时截图、缓存文件。
 - 大型 PDF、图像或自动生成图表，除非明确用于论文记录且经过人工确认。
 

@@ -188,7 +188,7 @@ def read_metrics(results_path: Path, target_pfa: float | None) -> dict[str, Any]
     return {
         "results_path": str(results_path),
         "target_pfa": float(key),
-        "threshold_source": "test_diagnostic_current_eval",
+        "threshold_source": str(payload.get("threshold_source", "test_diagnostic_current_eval")),
         "threshold": float(result["threshold"]),
         "PD": float(result["PD"]),
         "PF": float(result["PF"]),
@@ -197,7 +197,10 @@ def read_metrics(results_path: Path, target_pfa: float | None) -> dict[str, Any]
         "FN": fn,
         "FP": fp,
         "TN": tn,
-        "num_clutter_bins_for_threshold": int(payload.get("num_clutter_bins", 0)),
+        "num_eval_clutter_bins": int(payload.get("num_clutter_bins", 0)),
+        "num_clutter_bins_for_threshold": int(
+            payload.get("num_clutter_bins_for_threshold", payload.get("num_clutter_bins", 0))
+        ),
         "worst_source": worst.get("source", ""),
         "worst_polarization": worst.get("polarization", ""),
         "worst_PD": worst.get("PD", ""),
@@ -232,12 +235,13 @@ def write_summary(path: Path, rows: list[dict[str, Any]], baseline: dict[str, An
         [row for row in rows if row.get("status") == "completed" and "PD" in row],
         key=lambda row: (-float(row["PD"]), float(row["PF"])),
     )
+    threshold_sources = sorted({str(row.get("threshold_source", "")) for row in ranked if row.get("threshold_source")})
     lines = [
         "# 自动化模块实验汇总",
         "",
         f"- target_pfa: {target_pfa if target_pfa is not None else 0.001}",
-        "- threshold_source: test_diagnostic_current_eval",
-        "- 说明：当前评估脚本仍用测试集杂波分布取阈值，只适合作为模块筛选诊断，不应直接写成正式论文性能结论。",
+        f"- threshold_source: {', '.join(threshold_sources) if threshold_sources else 'unknown'}",
+        "- 说明：train_clutter 使用训练集杂波分数定阈值；test_diagnostic_current_eval 使用测试集杂波分数定阈值，只适合作为模块筛选诊断。",
         "",
     ]
     if baseline:

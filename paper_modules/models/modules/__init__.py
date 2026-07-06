@@ -1,9 +1,11 @@
 from .detection_head import DetectionHead
 from .radar_feature_encoder import RadarFeatureEncoder
 from .spatial_graph import SpatialGraphModule
+from .temporal import TemporalModule
 
 __all__ = [
     "DetectionHead",
     "RadarFeatureEncoder",
     "SpatialGraphModule",
+    "TemporalModule",
 ]

@@ -225,7 +225,7 @@ def make_range_labels(entry: dict[str, Any], nrange: int, target_policy: str) ->
     return labels, roles
 
 
-def auto_process_iq(i_raw: Any, q_raw: Any) -> tuple[Any, dict[str, Any]]:
+def fit_auto_process_stats(i_raw: Any, q_raw: Any) -> dict[str, Any]:
     import numpy as np
 
     i_values = i_raw.astype(np.float32)
@@ -244,22 +244,37 @@ def auto_process_iq(i_raw: Any, q_raw: Any) -> tuple[Any, dict[str, Any]]:
     sin_inbal = (i_norm * q_norm).mean(axis=0, dtype=np.float64)
     sin_inbal = np.clip(sin_inbal, -0.999999, 0.999999)
 
-    denom = np.sqrt(1.0 - sin_inbal**2)
-    i_rot = (i_norm - q_norm * sin_inbal) / denom
     inbalance_deg = np.arcsin(sin_inbal) * 180.0 / np.pi
 
-    complex_echo = (i_rot.astype(np.float32) + 1j * q_norm.astype(np.float32)).astype(np.complex64)
-    stats = {
+    return {
         "mean_i": mean_i.astype(np.float32),
         "mean_q": mean_q.astype(np.float32),
         "std_i": std_i.astype(np.float32),
         "std_q": std_q.astype(np.float32),
+        "sin_inbal": sin_inbal.astype(np.float32),
         "inbalance_deg": inbalance_deg.astype(np.float32),
     }
+
+
+def apply_auto_process_stats(i_raw: Any, q_raw: Any, stats: dict[str, Any]) -> Any:
+    import numpy as np
+
+    i_values = i_raw.astype(np.float32)
+    q_values = q_raw.astype(np.float32)
+    i_norm = (i_values - stats["mean_i"]) / stats["std_i"]
+    q_norm = (q_values - stats["mean_q"]) / stats["std_q"]
+    denom = np.sqrt(1.0 - stats["sin_inbal"] ** 2)
+    i_rot = (i_norm - q_norm * stats["sin_inbal"]) / denom
+    return (i_rot.astype(np.float32) + 1j * q_norm.astype(np.float32)).astype(np.complex64)
+
+
+def auto_process_iq(i_raw: Any, q_raw: Any) -> tuple[Any, dict[str, Any]]:
+    stats = fit_auto_process_stats(i_raw, q_raw)
+    complex_echo = apply_auto_process_stats(i_raw, q_raw, stats)
     return complex_echo, stats
 
 
-def extract_polarization(nc: NetCDFClassicFile, pol: str) -> tuple[Any, dict[str, Any]]:
+def extract_polarization_raw(nc: NetCDFClassicFile, pol: str) -> tuple[Any, Any]:
     adc = nc.read_variable("adc_data")
     if adc.ndim != 4:
         raise ValueError(f"Expected 4-D adc_data for alternating TX polarization, got shape {adc.shape}")
@@ -275,6 +290,11 @@ def extract_polarization(nc: NetCDFClassicFile, pol: str) -> tuple[Any, dict[str
 
     i_raw = adc[:, tx_index, :, i_adc]
     q_raw = adc[:, tx_index, :, q_adc]
+    return i_raw, q_raw
+
+
+def extract_polarization(nc: NetCDFClassicFile, pol: str) -> tuple[Any, dict[str, Any]]:
+    i_raw, q_raw = extract_polarization_raw(nc, pol)
     return auto_process_iq(i_raw, q_raw)
 
 
@@ -323,6 +343,7 @@ def save_split(
         std_i=stats["std_i"],
         std_q=stats["std_q"],
         inbalance_deg=stats["inbalance_deg"],
+        stats_scope=np.array(stats["stats_scope"]),
         source_file=np.array(source_file),
         polarization=np.array(pol),
         split=np.array(split_name),
@@ -360,7 +381,10 @@ def preprocess(args: argparse.Namespace) -> None:
     if missing:
         raise SystemExit(f"Missing target labels for: {', '.join(missing)}")
 
-    output_root = args.output_dir / f"window{args.window}_stride{args.stride}_{args.target_policy}"
+    output_name = f"window{args.window}_stride{args.stride}_{args.target_policy}"
+    if args.stats_scope != "full_file":
+        output_name = f"{output_name}_stats_{args.stats_scope}"
+    output_root = args.output_dir / output_name
     records: list[dict[str, Any]] = []
 
     for cdf_path in cdf_paths:
@@ -376,7 +400,15 @@ def preprocess(args: argparse.Namespace) -> None:
         split_at = int(nsweep * args.train_fraction)
 
         for pol in args.pols:
-            echo, stats = extract_polarization(nc, pol)
+            if args.stats_scope == "full_file":
+                echo, stats = extract_polarization(nc, pol)
+            elif args.stats_scope == "train_only":
+                i_raw, q_raw = extract_polarization_raw(nc, pol)
+                stats = fit_auto_process_stats(i_raw[:split_at], q_raw[:split_at])
+                echo = apply_auto_process_stats(i_raw, q_raw, stats)
+            else:
+                raise ValueError(f"Unsupported stats_scope: {args.stats_scope}")
+            stats["stats_scope"] = args.stats_scope
             for split_name, start, stop in (
                 ("train", 0, split_at),
                 ("test", split_at, nsweep),
@@ -406,6 +438,7 @@ def preprocess(args: argparse.Namespace) -> None:
         "labels": str(args.labels),
         "output_dir": str(output_root),
         "train_fraction": args.train_fraction,
+        "stats_scope": args.stats_scope,
         "window": args.window,
         "stride": args.stride,
         "target_policy": args.target_policy,
@@ -457,6 +490,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--window", type=int, default=get_config_value(config, "ipix.window"))
     parser.add_argument("--stride", type=int, default=get_config_value(config, "ipix.stride"))
     parser.add_argument("--train-fraction", type=float, default=get_config_value(config, "ipix.train_fraction"))
+    parser.add_argument(
+        "--stats-scope",
+        choices=("full_file", "train_only"),
+        default="full_file",
+        help="full_file keeps legacy auto-processing; train_only fits I/Q stats on the first train_fraction sweeps.",
+    )
     parser.add_argument(
         "--target-policy",
         choices=("related", "primary"),

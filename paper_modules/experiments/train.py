@@ -103,35 +103,53 @@ def evaluate_files(
     device: torch.device,
     pfa_values: list[float],
     max_windows_per_file: int | None = None,
+    threshold_files: list[Path] | None = None,
+    threshold_source: str = "test_diagnostic_current_eval",
+    max_threshold_windows: int | None = None,
     seed: int = 42,
 ) -> dict[str, object]:
     model.eval()
     import numpy as np
 
-    rng = np.random.default_rng(seed)
-    records: list[dict[str, Any]] = []
-    clutter_scores: list[np.ndarray] = []
+    eval_rng = np.random.default_rng(seed)
+    threshold_rng = np.random.default_rng(seed)
+    records, eval_clutter = collect_file_scores(
+        model,
+        files,
+        batch_size,
+        device,
+        eval_rng,
+        max_windows_per_file=max_windows_per_file,
+    )
 
-    with torch.no_grad():
-        for path in files:
-            x, y = load_ipix_arrays(path, max_windows=max_windows_per_file, rng=rng)
-            o0_parts: list[np.ndarray] = []
-            for start in range(0, len(x), batch_size):
-                batch = x[start : start + batch_size]
-                real = torch.from_numpy(batch.real.astype(np.float32, copy=False)).to(device)
-                imag = torch.from_numpy(batch.imag.astype(np.float32, copy=False)).to(device)
-                logits = model(torch.complex(real, imag))
-                probs = torch.softmax(logits, dim=1)[:, 0, :].cpu().numpy()
-                o0_parts.append(probs)
-            o0 = np.concatenate(o0_parts, axis=0)
-            clutter_scores.append(o0[y == 0])
-            source, pol = parse_source_and_pol(path)
-            records.append({"source": source, "polarization": pol, "o0": o0, "labels": y})
+    if threshold_source == "test_diagnostic_current_eval":
+        threshold_clutter = eval_clutter
+        num_threshold_files = len(records)
+    elif threshold_source == "train_clutter":
+        if threshold_files is None:
+            raise ValueError("threshold_source=train_clutter 需要提供 threshold_files。")
+        threshold_records, threshold_clutter = collect_file_scores(
+            model,
+            threshold_files,
+            batch_size,
+            device,
+            threshold_rng,
+            max_total_windows=max_threshold_windows,
+        )
+        num_threshold_files = len(threshold_records)
+    else:
+        raise ValueError(f"未知 threshold_source: {threshold_source}")
 
-    all_clutter = np.concatenate(clutter_scores)
-    results: dict[str, object] = {"num_files": len(files), "num_clutter_bins": int(all_clutter.shape[0]), "pfa": {}}
+    results: dict[str, object] = {
+        "num_files": len(records),
+        "num_clutter_bins": int(eval_clutter.shape[0]),
+        "threshold_source": threshold_source,
+        "num_threshold_files": num_threshold_files,
+        "num_clutter_bins_for_threshold": int(threshold_clutter.shape[0]),
+        "pfa": {},
+    }
     for pfa in pfa_values:
-        ordered = np.sort(all_clutter)
+        ordered = np.sort(threshold_clutter)
         idx = int(np.ceil(pfa * len(ordered))) - 1
         threshold = float(ordered[max(0, min(idx, len(ordered) - 1))])
         total = {"TP": 0, "FN": 0, "FP": 0, "TN": 0}
@@ -150,6 +168,49 @@ def evaluate_files(
             per_file.append({"source": item["source"], "polarization": item["polarization"], **_pd_pf(counts), **counts})
         results["pfa"][str(pfa)] = {"threshold": threshold, **_pd_pf(total), **total, "per_file": per_file}
     return results
+
+
+def collect_file_scores(
+    model: nn.Module,
+    files: list[Path],
+    batch_size: int,
+    device: torch.device,
+    rng: Any,
+    max_windows_per_file: int | None = None,
+    max_total_windows: int | None = None,
+) -> tuple[list[dict[str, Any]], Any]:
+    import numpy as np
+
+    records: list[dict[str, Any]] = []
+    clutter_scores: list[np.ndarray] = []
+    remaining = max_total_windows
+
+    with torch.no_grad():
+        for path in files:
+            if remaining is not None and remaining <= 0:
+                break
+            limit = max_windows_per_file
+            if remaining is not None:
+                limit = remaining if limit is None else min(limit, remaining)
+            x, y = load_ipix_arrays(path, max_windows=limit, rng=rng)
+            if remaining is not None:
+                remaining -= len(x)
+            o0_parts: list[np.ndarray] = []
+            for start in range(0, len(x), batch_size):
+                batch = x[start : start + batch_size]
+                real = torch.from_numpy(batch.real.astype(np.float32, copy=False)).to(device)
+                imag = torch.from_numpy(batch.imag.astype(np.float32, copy=False)).to(device)
+                logits = model(torch.complex(real, imag))
+                probs = torch.softmax(logits, dim=1)[:, 0, :].cpu().numpy()
+                o0_parts.append(probs)
+            o0 = np.concatenate(o0_parts, axis=0)
+            clutter_scores.append(o0[y == 0])
+            source, pol = parse_source_and_pol(path)
+            records.append({"source": source, "polarization": pol, "o0": o0, "labels": y})
+
+    if not clutter_scores:
+        raise ValueError("没有可用于阈值或评估的 clutter scores。")
+    return records, np.concatenate(clutter_scores)
 
 
 def save_checkpoint(path: Path, model: nn.Module, config: dict[str, Any], extra: dict[str, object]) -> None:
@@ -266,6 +327,9 @@ def main() -> None:
         device,
         get_config_value(config, "eval.pfa_values"),
         max_windows_per_file=args.max_test_windows_per_file,
+        threshold_files=train_files,
+        threshold_source=str(config.get("eval", {}).get("threshold_source", "test_diagnostic_current_eval")),
+        max_threshold_windows=args.max_train_windows,
         seed=seed,
     )
     save_dir.mkdir(parents=True, exist_ok=True)

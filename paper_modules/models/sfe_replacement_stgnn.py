@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .modules import DetectionHead, RadarFeatureEncoder, SpatialGraphModule
+from .modules import DetectionHead, RadarFeatureEncoder, SpatialGraphModule, TemporalModule
 
 
 class SFEReplacementSTGNN(nn.Module):
@@ -30,10 +30,6 @@ class SFEReplacementSTGNN(nn.Module):
         if bool(gate_cfg.get("enabled", False)):
             raise ValueError("论文主干替换实验当前不支持同时开启 clutter_gate。")
 
-        temporal_type = str(temporal_cfg.get("type", "stgnn_tfe"))
-        if temporal_type != "stgnn_tfe":
-            raise ValueError(f"sfe_replacement_stgnn 只支持 temporal.type=stgnn_tfe，实际为 {temporal_type}。")
-
         self.pulses = int(model_cfg.get("pulses", 4))
         self.range_cells = int(model_cfg.get("range_cells", 14))
 
@@ -49,9 +45,9 @@ class SFEReplacementSTGNN(nn.Module):
             out_channels=feature_channels,
         )
         self.spatial_graph1 = self._build_spatial_graph(spatial_cfg, feature_channels, spatial1_channels)
-        self.tfe1 = _STGNNTemporalGate(spatial1_channels, temporal1_channels)
+        self.tfe1 = TemporalModule(temporal_cfg, spatial1_channels, temporal1_channels)
         self.spatial_graph2 = self._build_spatial_graph(spatial_cfg, temporal1_channels, spatial2_channels)
-        self.tfe2 = _STGNNTemporalGate(spatial2_channels, temporal2_channels)
+        self.tfe2 = TemporalModule(temporal_cfg, spatial2_channels, temporal2_channels)
         self.detection_head = DetectionHead(
             in_channels=temporal2_channels,
             hidden_channels=int(head_cfg.get("hidden_channels", 512)),
@@ -103,15 +99,3 @@ class SFEReplacementSTGNN(nn.Module):
                 "temporal2": temporal2,
             }
         return logits
-
-
-class _STGNNTemporalGate(nn.Module):
-    """原 ST-GNN 的 TFE 门控压缩：沿 pulse 维做 stride=2 时间压缩。"""
-
-    def __init__(self, in_channels: int, out_channels: int):
-        super().__init__()
-        self.update = nn.Conv2d(in_channels, out_channels, kernel_size=(3, 1), stride=(2, 1), padding=(1, 0))
-        self.output = nn.Conv2d(in_channels, out_channels, kernel_size=(3, 1), stride=(2, 1), padding=(1, 0))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return torch.sigmoid(self.update(x)) * torch.tanh(self.output(x))
