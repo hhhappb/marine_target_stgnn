@@ -18,7 +18,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from paper_modules.experiments.train import load_checkpoint
+from paper_modules.experiments.train import git_commit, load_checkpoint
 from paper_modules.datasets.ipix_window import list_split_files, load_ipix_arrays, parse_source_and_pol, seed_everything
 from paper_modules.models import build_model
 from utils.config import get_config_value, load_config
@@ -44,11 +44,13 @@ def main() -> None:
     seed_everything(seed)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    data_dir = Path(get_config_value(config, "paths.data_dir"))
-    pols = get_config_value(config, "ipix.polarizations")
+    dataset_cfg = config.get("dataset", {})
+    data_dir = Path(dataset_cfg.get("data_dir", get_config_value(config, "paths.data_dir")))
+    pols = _as_list(dataset_cfg.get("polarizations", get_config_value(config, "ipix.polarizations"))) or []
+    sources = _as_list(dataset_cfg.get("sources", dataset_cfg.get("source")))
     batch_size = args.batch_size or int(get_config_value(config, "train.batch_size"))
-    train_files = list_split_files(data_dir, "train", pols)
-    test_files = list_split_files(data_dir, "test", pols)
+    train_files = list_split_files(data_dir, "train", pols, sources=sources)
+    test_files = list_split_files(data_dir, "test", pols, sources=sources)
     if not train_files:
         raise SystemExit(f"No train files found under {data_dir}")
     if not test_files:
@@ -106,8 +108,14 @@ def main() -> None:
     results = {
         "config": str(args.config),
         "checkpoint": str(args.checkpoint),
+        "git_commit": git_commit(),
         "data_dir": str(data_dir),
+        "sources": sources or [],
         "polarizations": pols,
+        "train_files": [str(path) for path in train_files],
+        "test_files": [str(path) for path in test_files],
+        "num_train_files": len(train_files),
+        "num_test_files": len(test_files),
         "target_pfa": args.target_pfa,
         "threshold_source": "train_clutter_original_inputs",
         "threshold": threshold,
@@ -333,6 +341,14 @@ def pd_pf(counts: dict[str, int]) -> dict[str, float]:
         "PD": tp / (tp + fn) if (tp + fn) else 0.0,
         "PF": fp / (fp + tn) if (fp + tn) else 0.0,
     }
+
+
+def _as_list(value: Any) -> list[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return [value]
+    return [str(item) for item in value]
 
 
 def masked_rate(det: np.ndarray, mask: np.ndarray) -> float:

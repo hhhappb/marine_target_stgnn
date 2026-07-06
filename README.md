@@ -41,3 +41,9 @@ IPIX Fig.7 hard-point per-file protocol check:
 ```powershell
 .\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --suite paper_modules\configs\suites\per_file_fig7_hardpoints_b.yaml
 ```
+
+Validate the hard-point configs before launching runs:
+
+```powershell
+.\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --suite paper_modules\configs\suites\per_file_fig7_hardpoints_b.yaml --validate-only
+```

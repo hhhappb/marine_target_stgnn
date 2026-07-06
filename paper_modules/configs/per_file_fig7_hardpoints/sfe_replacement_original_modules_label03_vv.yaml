@@ -1,6 +1,6 @@
 paths:
   data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related_stats_train_only
-  save_dir: logs/training/per_file_fig7_hardpoints/sfe_tfe_radar_diffbic_label03_vv
+  save_dir: logs/training/per_file_fig7_hardpoints/sfe_replacement_original_modules_label03_vv
 
 dataset:
   type: ipix_window
@@ -22,28 +22,15 @@ radar_features:
   out_channels: 64
 
 spatial_graph:
-  type: radar_prior_dynamic_sfe
+  type: original_stfe
   stage1_out_channels: 128
   stage2_out_channels: 512
-  static_gamma: 0.5
-  static_delta: 5
-  static_weight: 0.7
-  dynamic_topk: 2
-  dynamic_temperature: 0.2
-  dropout: 0.1
 
 temporal:
-  type: diff_bicam_tfe
+  type: stgnn_tfe
   stage1_out_channels: 256
   stage2_out_channels: 1024
   out_channels: 1024
-  num_heads: 4
-  dropout: 0.1
-  use_diff: true
-  use_coattention: true
-  use_prev: true
-  use_next: true
-  shuffle_diff: false
 
 clutter_gate:
   enabled: false

@@ -32,6 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--name", type=str, default="auto_modules")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--stop-on-failure", action="store_true")
+    parser.add_argument("--validate-only", action="store_true", help="Validate selected per-file configs without launching training.")
     return parser.parse_args()
 
 
@@ -41,6 +42,9 @@ def main() -> None:
     configs = resolve_configs(args)
     if not configs:
         raise SystemExit("No configs selected. Pass --configs ... or --all-configs.")
+    if args.validate_only:
+        validate_configs(configs, args)
+        return
 
     run_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}_{safe_name(args.name)}"
     run_dir = args.run_root / run_id
@@ -113,11 +117,82 @@ def resolve_configs(args: argparse.Namespace) -> list[Path]:
     return unique
 
 
-def run_one(args: argparse.Namespace, config_path: Path, base_cfg: dict[str, Any], seed: int, run_dir: Path) -> dict[str, Any] | None:
-    run_name = f"{safe_name(config_path.stem)}_seed{seed}"
-    save_dir = run_dir / "runs" / run_name
+def validate_configs(configs: list[Path], args: argparse.Namespace) -> None:
+    rows: list[dict[str, Any]] = []
+    errors: list[str] = []
+    warnings: list[str] = []
+    require_train_only_stats = "per_file_fig7" in args.name
+
+    for config_path in configs:
+        base_cfg = load_config(config_path)
+        seeds = args.seeds or [int(get_config_value(base_cfg, "train.seed"))]
+        for seed in seeds:
+            cfg = prepare_run_config(args, base_cfg, seed)
+            meta = config_metadata(cfg)
+            meta["config"] = str(config_path)
+            meta["seed"] = seed
+            rows.append(meta)
+
+            label = f"{config_path.name} seed{seed}"
+            if meta["dataset_type"] != "ipix_window":
+                errors.append(f"{label}: dataset.type 必须是 ipix_window。")
+            if len(meta["sources"]) != 1:
+                errors.append(f"{label}: per-file 配置必须且只能声明 1 个 dataset.sources。")
+            if len(meta["polarizations"]) != 1:
+                errors.append(f"{label}: per-file 配置必须且只能声明 1 个 dataset.polarizations。")
+            if meta["eval_protocol"] != "per_file_pol":
+                errors.append(f"{label}: eval.protocol 必须是 per_file_pol。")
+            if meta["threshold_source"] != "train_clutter":
+                errors.append(f"{label}: eval.threshold_source 必须是 train_clutter。")
+            if meta["paths_data_dir"] != meta["dataset_data_dir"]:
+                errors.append(f"{label}: paths.data_dir 与 dataset.data_dir 不一致。")
+            if require_train_only_stats and "stats_train_only" not in meta["data_dir"]:
+                errors.append(f"{label}: Fig.7 hardpoint 正式配置必须使用 train-only stats 数据目录。")
+
+    pairs: dict[tuple[str, str, int], list[dict[str, Any]]] = {}
+    for row in rows:
+        if len(row["sources"]) == 1 and len(row["polarizations"]) == 1:
+            pairs.setdefault((row["sources"][0], row["polarizations"][0], int(row["seed"])), []).append(row)
+
+    for pair_key, pair_rows in sorted(pairs.items()):
+        baseline_rows = [row for row in pair_rows if row["model_name"] == "original_stgnn"]
+        candidate_rows = [row for row in pair_rows if row["model_name"] != "original_stgnn"]
+        pair_label = f"{pair_key[0]}/{pair_key[1]}/seed{pair_key[2]}"
+        if len(baseline_rows) != 1:
+            errors.append(f"{pair_label}: 需要且只能有 1 个 original_stgnn baseline，实际 {len(baseline_rows)} 个。")
+            continue
+        if not candidate_rows:
+            errors.append(f"{pair_label}: 缺少待比较模型配置。")
+            continue
+        baseline = baseline_rows[0]
+        for candidate in candidate_rows:
+            mismatches = comparable_mismatches(candidate, baseline)
+            if mismatches:
+                errors.append(f"{pair_label}: {Path(candidate['config']).name} 与 baseline 字段不一致: {', '.join(mismatches)}。")
+
+    if args.seeds is None:
+        warnings.append("当前 suite 只使用配置内 seed；seed42 结果只能作方向读数，正式结论建议至少 3 个 seed。")
+
+    print("Config validation summary", flush=True)
+    print(f"- configs: {len(configs)}", flush=True)
+    print(f"- run units: {len(rows)}", flush=True)
+    print(f"- pairs: {len(pairs)}", flush=True)
+    if warnings:
+        print("Warnings:", flush=True)
+        for item in warnings:
+            print(f"- {item}", flush=True)
+    if errors:
+        print("Errors:", flush=True)
+        for item in errors:
+            print(f"- {item}", flush=True)
+        raise SystemExit("Config validation failed.")
+    print("VALIDATION_OK", flush=True)
+
+
+def prepare_run_config(args: argparse.Namespace, base_cfg: dict[str, Any], seed: int, save_dir: Path | None = None) -> dict[str, Any]:
     cfg = json.loads(json.dumps(base_cfg))
-    cfg.setdefault("paths", {})["save_dir"] = str(save_dir)
+    if save_dir is not None:
+        cfg.setdefault("paths", {})["save_dir"] = str(save_dir)
     cfg.setdefault("train", {})["seed"] = seed
     if args.epochs is not None:
         cfg["train"]["epochs"] = args.epochs
@@ -125,6 +200,45 @@ def run_one(args: argparse.Namespace, config_path: Path, base_cfg: dict[str, Any
         cfg["train"]["batch_size"] = args.batch_size
     if args.num_workers is not None:
         cfg["train"]["num_workers"] = args.num_workers
+    return cfg
+
+
+def config_metadata(config: dict[str, Any]) -> dict[str, Any]:
+    dataset_cfg = config.get("dataset", {})
+    eval_cfg = config.get("eval", {})
+    train_cfg = config.get("train", {})
+    paths_cfg = config.get("paths", {})
+    pols = _as_list(dataset_cfg.get("polarizations", config.get("ipix", {}).get("polarizations", []))) or []
+    sources = _as_list(dataset_cfg.get("sources", dataset_cfg.get("source"))) or []
+    paths_data_dir = str(paths_cfg.get("data_dir", ""))
+    dataset_data_dir = str(dataset_cfg.get("data_dir", paths_data_dir))
+    return {
+        "model_name": str(config.get("model", {}).get("name", "")),
+        "dataset_type": str(dataset_cfg.get("type", "ipix_window")),
+        "data_dir": paths_data_dir,
+        "paths_data_dir": paths_data_dir,
+        "dataset_data_dir": dataset_data_dir,
+        "sources": sources,
+        "source": sources[0] if len(sources) == 1 else "",
+        "polarizations": pols,
+        "polarization": pols[0] if len(pols) == 1 else "",
+        "eval_protocol": str(eval_cfg.get("protocol", "per_file_pol")),
+        "threshold_source": str(eval_cfg.get("threshold_source", "test_diagnostic_current_eval")),
+        "epochs": int(train_cfg.get("epochs", 0)),
+        "batch_size": int(train_cfg.get("batch_size", 0)),
+        "learning_rate": float(train_cfg.get("learning_rate", 0.0)),
+    }
+
+
+def comparable_mismatches(candidate: dict[str, Any], baseline: dict[str, Any]) -> list[str]:
+    fields = ["data_dir", "epochs", "batch_size", "learning_rate", "threshold_source", "eval_protocol"]
+    return [field for field in fields if candidate.get(field) != baseline.get(field)]
+
+
+def run_one(args: argparse.Namespace, config_path: Path, base_cfg: dict[str, Any], seed: int, run_dir: Path) -> dict[str, Any] | None:
+    run_name = f"{safe_name(config_path.stem)}_seed{seed}"
+    save_dir = run_dir / "runs" / run_name
+    cfg = prepare_run_config(args, base_cfg, seed, save_dir=save_dir)
 
     config_snapshot = run_dir / "configs" / f"{run_name}.yaml"
     stdout_path = save_dir / "stdout.log"
@@ -169,6 +283,7 @@ def run_one(args: argparse.Namespace, config_path: Path, base_cfg: dict[str, Any
 
     duration = time.time() - t0
     row = base_row(run_name, config_path, config_snapshot, save_dir, stdout_path, seed, status, returncode, duration)
+    row.update(config_metadata(cfg))
     if status == "completed":
         row.update(read_metrics(save_dir / "eval_results.json", args.target_pfa))
     return row
@@ -201,6 +316,10 @@ def read_metrics(results_path: Path, target_pfa: float | None) -> dict[str, Any]
         "num_clutter_bins_for_threshold": int(
             payload.get("num_clutter_bins_for_threshold", payload.get("num_clutter_bins", 0))
         ),
+        "protocol": str(payload.get("protocol", "")),
+        "git_commit": str(payload.get("git_commit", "")),
+        "train_files": ";".join(payload.get("train_files", [])),
+        "test_files": ";".join(payload.get("test_files", [])),
         "worst_source": worst.get("source", ""),
         "worst_polarization": worst.get("polarization", ""),
         "worst_PD": worst.get("PD", ""),
@@ -217,20 +336,28 @@ def select_pfa_key(pfa_map: dict[str, Any], target_pfa: float | None) -> str:
 
 def write_outputs(run_dir: Path, rows: list[dict[str, Any]], target_pfa: float | None) -> None:
     completed = [row for row in rows if row.get("status") == "completed" and "PD" in row]
-    baseline = completed[0] if completed else None
+    baselines = {
+        pair_key(row): row
+        for row in completed
+        if row.get("model_name") == "original_stgnn" and pair_key(row) is not None
+    }
     rows_for_output = []
     for row in rows:
         item = dict(row)
+        key = pair_key(item)
+        baseline = baselines.get(key) if key is not None else None
         if baseline and "PD" in item:
-            item["delta_PD_vs_baseline"] = float(item["PD"]) - float(baseline["PD"])
-            item["delta_PF_vs_baseline"] = float(item["PF"]) - float(baseline["PF"])
+            item["pair_baseline_run"] = baseline["run_name"]
+            item["delta_PD_vs_pair_baseline"] = float(item["PD"]) - float(baseline["PD"])
+            item["delta_PF_vs_pair_baseline"] = float(item["PF"]) - float(baseline["PF"])
+            item["pair_mismatch_fields"] = ", ".join(comparable_mismatches(item, baseline))
         rows_for_output.append(item)
     write_csv(run_dir / "metrics.csv", rows_for_output)
-    write_summary(run_dir / "summary.md", rows_for_output, baseline, target_pfa)
+    write_summary(run_dir / "summary.md", rows_for_output, target_pfa)
     write_artifacts(run_dir / "artifacts.txt", rows_for_output)
 
 
-def write_summary(path: Path, rows: list[dict[str, Any]], baseline: dict[str, Any] | None, target_pfa: float | None) -> None:
+def write_summary(path: Path, rows: list[dict[str, Any]], target_pfa: float | None) -> None:
     ranked = sorted(
         [row for row in rows if row.get("status") == "completed" and "PD" in row],
         key=lambda row: (-float(row["PD"]), float(row["PF"])),
@@ -244,22 +371,33 @@ def write_summary(path: Path, rows: list[dict[str, Any]], baseline: dict[str, An
         "- 说明：train_clutter 使用训练集杂波分数定阈值；test_diagnostic_current_eval 使用测试集杂波分数定阈值，只适合作为模块筛选诊断。",
         "",
     ]
-    if baseline:
-        lines.extend(
-            [
-                "## Baseline",
-                "",
-                f"- {baseline['run_name']}: PD={float(baseline['PD']):.6f}, PF={float(baseline['PF']):.6f}, accuracy={float(baseline['accuracy']):.6f}",
-                "",
-            ]
+    lines.extend(
+        [
+            "## Paired Comparison",
+            "",
+            "| Pair | Run | Model | PD | PF | Delta PD vs pair baseline | Delta PF vs pair baseline | Pair mismatch |",
+            "|---|---|---|---:|---:|---:|---:|---|",
+        ]
+    )
+    paired = sorted(
+        [row for row in rows if row.get("status") == "completed" and "PD" in row],
+        key=lambda row: (str(row.get("source", "")), str(row.get("polarization", "")), str(row.get("run_name", ""))),
+    )
+    for row in paired:
+        pair = f"{row.get('source', '')}/{row.get('polarization', '')}/seed{row.get('seed', '')}"
+        delta_pd = row.get("delta_PD_vs_pair_baseline", 0.0)
+        delta_pf = row.get("delta_PF_vs_pair_baseline", 0.0)
+        mismatch = row.get("pair_mismatch_fields", "")
+        lines.append(
+            f"| {pair} | {row['run_name']} | {row.get('model_name', '')} | {float(row['PD']):.6f} | "
+            f"{float(row['PF']):.6f} | {float(delta_pd):+.6f} | {float(delta_pf):+.6f} | {mismatch or 'ok'} |"
         )
-    lines.extend(["## Ranking", "", "| Rank | Run | PD | PF | Accuracy | Delta PD | Worst file/pol |", "|---:|---|---:|---:|---:|---:|---|"])
+    lines.extend(["", "## Diagnostic Ranking", "", "| Rank | Run | PD | PF | Accuracy | Worst file/pol |", "|---:|---|---:|---:|---:|---|"])
     for idx, row in enumerate(ranked, start=1):
-        delta = row.get("delta_PD_vs_baseline", 0.0)
         worst = f"{row.get('worst_source', '')}/{row.get('worst_polarization', '')}"
         lines.append(
             f"| {idx} | {row['run_name']} | {float(row['PD']):.6f} | {float(row['PF']):.6f} | "
-            f"{float(row['accuracy']):.6f} | {float(delta):+.6f} | {worst} |"
+            f"{float(row['accuracy']):.6f} | {worst} |"
         )
     failed = [row for row in rows if row.get("status") != "completed"]
     if failed:
@@ -267,6 +405,14 @@ def write_summary(path: Path, rows: list[dict[str, Any]], baseline: dict[str, An
         for row in failed:
             lines.append(f"- {row['run_name']}: status={row.get('status')} returncode={row.get('returncode')} stdout={row.get('stdout_log')}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def pair_key(row: dict[str, Any]) -> tuple[str, str, int] | None:
+    source = str(row.get("source", ""))
+    pol = str(row.get("polarization", ""))
+    if not source or not pol or "seed" not in row:
+        return None
+    return source, pol, int(row["seed"])
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -328,6 +474,14 @@ def write_yaml(path: Path, payload: dict[str, Any]) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
+def _as_list(value: Any) -> list[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return [value]
+    return [str(item) for item in value]
 
 
 def safe_name(value: str) -> str:

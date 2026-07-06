@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -474,6 +475,21 @@ def main() -> None:
     else:
         raise ValueError(f"未知 eval.protocol: {eval_protocol}")
 
+    checkpoint_path = args.checkpoint if args.eval_only else save_dir / "best_model.pth"
+    results.update(
+        run_metadata(
+            args=args,
+            config=config,
+            data_dir=data_dir,
+            dataset_type=dataset_type,
+            eval_protocol=eval_protocol,
+            sources=sources,
+            pols=pols,
+            train_files=train_files,
+            test_files=test_files,
+            checkpoint_path=checkpoint_path,
+        )
+    )
     results_path = save_dir / "eval_results.json"
     results_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
     metrics_path = save_dir / "metrics.json"
@@ -499,6 +515,50 @@ def _metrics(correct: int, total_bins: int, tp: int, fp: int, tn: int, fn: int) 
 def _pd_pf(counts: dict[str, int]) -> dict[str, float]:
     tp, fn, fp, tn = counts["TP"], counts["FN"], counts["FP"], counts["TN"]
     return {"PD": tp / (tp + fn) if (tp + fn) else 0.0, "PF": fp / (fp + tn) if (fp + tn) else 0.0}
+
+
+def run_metadata(
+    args: argparse.Namespace,
+    config: dict[str, Any],
+    data_dir: Path,
+    dataset_type: str,
+    eval_protocol: str,
+    sources: list[str] | None,
+    pols: Any,
+    train_files: list[Path],
+    test_files: list[Path],
+    checkpoint_path: Path,
+) -> dict[str, Any]:
+    dataset_cfg = config.get("dataset", {})
+    return {
+        "protocol": eval_protocol,
+        "dataset_type": dataset_type,
+        "data_dir": str(data_dir),
+        "dataset_data_dir": str(dataset_cfg.get("data_dir", data_dir)),
+        "sources": sources or [],
+        "polarizations": _as_list(pols) or [],
+        "num_train_files": len(train_files),
+        "num_test_files": len(test_files),
+        "train_files": [str(path) for path in train_files],
+        "test_files": [str(path) for path in test_files],
+        "config_path": str(args.config),
+        "checkpoint": str(checkpoint_path),
+        "git_commit": git_commit(),
+    }
+
+
+def git_commit() -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:
+        return "unknown"
+    return completed.stdout.strip() or "unknown"
 
 
 def _as_list(value: Any) -> list[str] | None:

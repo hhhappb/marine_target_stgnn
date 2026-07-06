@@ -1,6 +1,6 @@
 paths:
   data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related_stats_train_only
-  save_dir: logs/training/per_file_fig7_hardpoints/original_stgnn_label06_hh
+  save_dir: logs/training/per_file_fig7_hardpoints/sfe_replacement_original_modules_label06_hh
 
 dataset:
   type: ipix_window
@@ -12,9 +12,31 @@ ipix:
   polarizations: [hh]
 
 model:
-  name: original_stgnn
+  name: sfe_replacement_stgnn
   pulses: 4
   range_cells: 14
+
+radar_features:
+  type: real_imag
+  hidden_channels: 32
+  out_channels: 64
+
+spatial_graph:
+  type: original_stfe
+  stage1_out_channels: 128
+  stage2_out_channels: 512
+
+temporal:
+  type: stgnn_tfe
+  stage1_out_channels: 256
+  stage2_out_channels: 1024
+  out_channels: 1024
+
+clutter_gate:
+  enabled: false
+
+detection_head:
+  hidden_channels: 512
 
 loss:
   type: cross_entropy

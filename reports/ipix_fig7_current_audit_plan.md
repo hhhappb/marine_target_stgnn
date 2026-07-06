@@ -28,7 +28,7 @@ reports/新空间新时间模块IPIX论文对比实验报告.md
 当前边界：
 
 - 报告引用的 checkpoint 不在当前工作区中；
-- 当前代码与报告配置存在不一致，报告结果需要重新跑可追溯版本；
+- 当前代码已增加 per-file source 过滤、train_clutter 阈值和结果追溯字段，但报告结果仍需要在实验机重新跑可追溯版本；
 - 该结果目前只能作为诊断强信号，不能直接作为严格论文结论。
 
 ## 2. 原论文 IPIX Fig.7 关键协议
@@ -114,16 +114,15 @@ paper_modules/experiments/auto_experiment.py
 
 当前训练组织：
 
-- `list_split_files(data_dir, "train", pols)` 会收集所有极化、所有 source 的 train `.npz`；
-- `IpixWindowDataset(train_files)` 将这些文件拼成一个训练集；
-- 因此当前主线是 pooled training，而不是明确的 per dataset×polarization training。
+- 未声明 `dataset.sources` 时，`IpixWindowDataset(train_files)` 仍会拼接多个文件，属于 pooled 训练；
+- hardpoint 配置已声明单个 `dataset.sources` 和单个 `dataset.polarizations`；
+- `paper_modules/datasets/registry.py` 与 `paper_modules/experiments/train.py` 已支持按 `source × polarization` 过滤 train/test 文件。
 
 当前评估逻辑风险：
 
-- `paper_modules/experiments/train.py::evaluate_files()` 只接收 eval/test files；
-- 它从这些 eval/test files 的 clutter scores 中计算 threshold；
-- 这更接近 `test_diagnostic_current_eval`，不是论文要求的 train clutter threshold；
-- 最新报告中虽然有 `train_clutter` 表，但当前代码路径不能直接复现该表。
+- `paper_modules/experiments/train.py::evaluate_files()` 已支持 `threshold_source=train_clutter`；
+- eval 结果会记录 `protocol`、`sources`、`polarizations`、train/test 文件清单和 `git_commit`；
+- 当前工作区缺少 `.venv`、processed `.npz` 和训练产物，动态复现需在实验机完成。
 
 ## 5. 当前模型代码路径
 
@@ -212,6 +211,8 @@ paper_modules/configs/sfe_tfe_replacement_radar_diffbic.yaml
 2. 重新输出 threshold、actual PF、TP/FN/FP/TN；
 3. 保存 threshold clutter bins 数。
 
+当前状态：代码路径已实现，仍需实验机用 hardpoint suite 重新跑并核对结果 JSON。
+
 判定：
 
 - 如果 train_clutter 复现报告数值，则阈值不是异常高的唯一来源；
@@ -284,27 +285,22 @@ paper_modules/configs/sfe_tfe_replacement_radar_diffbic.yaml
 
 建议按以下顺序执行，避免一次改太多变量：
 
-1. **可复现性修复**
-   - 让 `sfe_tfe_replacement_radar_diffbic.yaml` 可构建；
-   - 重新跑当前数据、当前配置；
-   - 保存完整 run 产物。
+1. **配置静态校验**
+   - 运行 `auto_experiment.py --suite paper_modules/configs/suites/per_file_fig7_hardpoints_b.yaml --validate-only`；
+   - 确认每个 hardpoint 都有 baseline 与候选模型，且 `data_dir`、阈值来源和训练超参一致。
 
-2. **train_clutter 阈值复核**
-   - 不改预处理；
-   - 不改模型；
-   - 只修评估阈值来源；
-   - 验证是否复现报告的 `PD=0.999796, actual PF=0.002243`。
+2. **B 档 per-file 对照**
+   - 使用 `window4_stride4_related_stats_train_only` 数据目录；
+   - 跑 `per_file_fig7_hardpoints_b.yaml`；
+   - 比较同一 `source × polarization × seed` 下的 pair delta。
 
-3. **per dataset×polarization 复核**
-   - 不改预处理；
-   - 不改模型；
-   - 改训练组织；
-   - 判断 pooled training 是否导致偏高。
+3. **三臂模块归因**
+   - 跑 `per_file_fig7_hardpoints_three_arm.yaml`；
+   - 分离原始整模型、新骨架原模块、新模块系统三者差异。
 
-4. **train-only auto-processing 对照**
-   - 只改预处理统计边界；
-   - 跑 pooled 与 per-file 两种最小对照；
-   - 判断全文件统计是否导致偏高。
+4. **多 seed 扩展**
+   - 对 hardpoint suite 扩展到至少 3 个 seed；
+   - seed42 结果只作为方向读数。
 
 5. **negative controls**
    - primary-only；

@@ -19,6 +19,14 @@
 
 每个 run 只使用一个 `source × polarization` 的 train split，评估同一个 `source × polarization` 的 test split。两模型共享同一数据、预处理、标签、阈值来源、seed、batch size 和训练入口，唯一变量是模型结构。
 
+当前 hardpoint 配置已统一指向 `window4_stride4_related_stats_train_only`，避免全文件 auto-processing 统计混入测试段分布。该目录需要先在实验机上由 `scripts/preprocess_ipix.py --stats-scope train_only` 生成。
+
+若需要拆分“系统级提升”和“SFE/TFE 模块贡献”，使用三臂 suite：
+
+1. `original_stgnn`：原始 ST-GNN 整模型；
+2. `sfe_replacement_original_modules`：同一替换骨架，但 SFE/TFE 取 `original_stfe + stgnn_tfe`；
+3. `sfe_tfe_radar_diffbic`：新空间 + 新时间模块。
+
 ## Hard Points
 
 | Label | Source | Pol | 论文 Fig.7 ST-GNN 数字化 PD | 历史 pooled PD | 风险说明 |
@@ -43,6 +51,13 @@ paper_modules/configs/per_file_fig7_hardpoints/
 
 ```text
 paper_modules/configs/suites/per_file_fig7_hardpoints_b.yaml
+paper_modules/configs/suites/per_file_fig7_hardpoints_three_arm.yaml
+```
+
+执行前静态校验：
+
+```powershell
+.\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --suite paper_modules\configs\suites\per_file_fig7_hardpoints_b.yaml --validate-only
 ```
 
 执行命令：
@@ -71,6 +86,6 @@ paper_modules/configs/suites/per_file_fig7_hardpoints_b.yaml
 B 档仍不是完整严格复现。它解决 pooled 训练归因问题，但仍需继续确认：
 
 - `target_policy=related` 是否完全等价论文标签口径；
-- 当前 auto-processing 是否使用了测试段统计；
 - 训练代码使用的 optimizer、class weights、weight decay 是否需要回到论文原始设置；
 - 论文 Fig.7 数字化值不是作者提供的精确原表。
+- 当前 suite 默认 seed=42；正式结论需扩展到至少 3 个 seed。
