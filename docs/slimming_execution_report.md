@@ -29,6 +29,7 @@ T4 未执行 history rewrite，因此没有瘦身前后对比结果。
 ### T1 缓存和文档整理
 
 - 删除非保护区 `__pycache__` 目录。
+- 删除空目录 `.agents/`。
 - `1.md` 移动为 `docs/ipix_related_papers_survey.md`。
 
 ### T2 数据重复目录
