@@ -12,11 +12,26 @@ pip install -r requirements.txt
 
 ## Structure
 
-- `train.py`, `run_train.py`, `train_paper_reproduction_v2.py`: training entry points
-- `evaluate_final.py`: evaluation entry point
-- `configs/ipix_stgnn.yaml`: default IPIX training configuration
+- `paper_modules/experiments/train.py`: unified training and evaluation entry point
+- `paper_modules/experiments/auto_experiment.py`: suite runner for comparable experiments
+- `paper_modules/experiments/leakage_probe.py`: diagnostic probe for range-position leakage
 - `models/`: frozen ST-GNN baseline model implementations
 - `paper_modules/models/`: configurable experimental model modules
+- `paper_modules/datasets/`: dataset registry and dataset adapters
 - `data/`, `datasets/`: prepared and raw datasets
 - `checkpoints/`: saved model weights
 - `logs/training/`: training and evaluation run logs
+
+## Commands
+
+IPIX module smoke:
+
+```powershell
+.\.venv\Scripts\python.exe paper_modules\experiments\train.py --config paper_modules\configs\real_imag_sfe_replacement_original_sfe.yaml --epochs 1 --max-train-windows 64 --max-test-windows-per-file 5 --no-progress --log-interval 1
+```
+
+SDRDSP SCR reproduction smoke:
+
+```powershell
+.\.venv\Scripts\python.exe paper_modules\experiments\train.py --config paper_modules\configs\repro_original_stgnn_scr256.yaml --epochs 2 --no-progress --log-interval 10
+```

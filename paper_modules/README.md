@@ -30,6 +30,7 @@ Feature -> SFE1 -> TFE1 -> SFE2 -> TFE2 -> DetectionHead
 | 原 I/Q 输入通道 | `configs/feature_replacement_original_iq.yaml` |
 | I/Q + 幅相输入通道 | `configs/feature_replacement_iq_amp_phase.yaml` |
 | I/Q + 幅相差分输入通道 | `configs/feature_replacement_iq_amp_phase_diffs.yaml` |
+| 原始 ST-GNN SDRDSP SCR 复现 | `configs/repro_original_stgnn_scr256.yaml` |
 | 输入通道快筛 suite | `configs/suites/feature_replacement_input_channel_screening.yaml` |
 
 ## 统一接口
@@ -67,4 +68,10 @@ logits:    [B, 2, N]
 
 ```powershell
 .\.venv\Scripts\python.exe paper_modules\experiments\train.py --config paper_modules\configs\real_imag_sfe_replacement_radar_prior_dynamic_sfe.yaml --epochs 1 --max-train-windows 64 --max-test-windows-per-file 5 --no-progress --log-interval 1
+```
+
+运行原始 ST-GNN SDRDSP SCR 复现 smoke：
+
+```powershell
+.\.venv\Scripts\python.exe paper_modules\experiments\train.py --config paper_modules\configs\repro_original_stgnn_scr256.yaml --epochs 2 --no-progress --log-interval 10
 ```
