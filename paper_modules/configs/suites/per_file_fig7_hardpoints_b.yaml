@@ -1,6 +1,7 @@
 name: per_file_fig7_hardpoints_b
 run_root: logs/training
 target_pfa: 0.001
+stats_scope: full_file
 stop_on_failure: true
 
 configs:

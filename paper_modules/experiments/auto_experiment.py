@@ -33,6 +33,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--stop-on-failure", action="store_true")
     parser.add_argument("--validate-only", action="store_true", help="Validate selected per-file configs without launching training.")
+    parser.add_argument(
+        "--stats-scope",
+        choices=["full_file", "train_only", "any"],
+        default=None,
+        help="Expected preprocessing statistics scope for selected configs.",
+    )
     return parser.parse_args()
 
 
@@ -92,6 +98,12 @@ def apply_suite(args: argparse.Namespace) -> None:
     args.run_root = Path(suite.get("run_root", args.run_root))
     args.name = str(suite.get("name", args.name))
     args.stop_on_failure = bool(suite.get("stop_on_failure", args.stop_on_failure))
+    stats_scope = suite.get("stats_scope", args.stats_scope)
+    if stats_scope is not None:
+        stats_scope = str(stats_scope)
+        if stats_scope not in {"full_file", "train_only", "any"}:
+            raise SystemExit(f"Unknown stats_scope in suite: {stats_scope}")
+    args.stats_scope = stats_scope
 
     overrides = suite.get("overrides", {})
     args.epochs = overrides.get("epochs", args.epochs)
@@ -121,7 +133,7 @@ def validate_configs(configs: list[Path], args: argparse.Namespace) -> None:
     rows: list[dict[str, Any]] = []
     errors: list[str] = []
     warnings: list[str] = []
-    require_train_only_stats = "per_file_fig7" in args.name
+    required_stats_scope = getattr(args, "stats_scope", None)
 
     for config_path in configs:
         base_cfg = load_config(config_path)
@@ -146,8 +158,10 @@ def validate_configs(configs: list[Path], args: argparse.Namespace) -> None:
                 errors.append(f"{label}: eval.threshold_source 必须是 train_clutter。")
             if meta["paths_data_dir"] != meta["dataset_data_dir"]:
                 errors.append(f"{label}: paths.data_dir 与 dataset.data_dir 不一致。")
-            if require_train_only_stats and "stats_train_only" not in meta["data_dir"]:
-                errors.append(f"{label}: Fig.7 hardpoint 正式配置必须使用 train-only stats 数据目录。")
+            if required_stats_scope == "train_only" and "stats_train_only" not in meta["data_dir"]:
+                errors.append(f"{label}: 当前 suite 声明 stats_scope=train_only，数据目录必须使用 stats_train_only。")
+            if required_stats_scope == "full_file" and "stats_train_only" in meta["data_dir"]:
+                errors.append(f"{label}: 当前 suite 声明 stats_scope=full_file，数据目录不能使用 stats_train_only。")
 
     pairs: dict[tuple[str, str, int], list[dict[str, Any]]] = {}
     for row in rows:

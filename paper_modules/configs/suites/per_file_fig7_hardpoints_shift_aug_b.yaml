@@ -1,6 +1,7 @@
 name: per_file_fig7_hardpoints_shift_aug_b
 run_root: logs/training
 target_pfa: 0.001
+stats_scope: train_only
 stop_on_failure: true
 
 configs:

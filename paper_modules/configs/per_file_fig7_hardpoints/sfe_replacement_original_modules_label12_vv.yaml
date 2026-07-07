@@ -1,10 +1,10 @@
 paths:
-  data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related_stats_train_only
+  data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related
   save_dir: logs/training/per_file_fig7_hardpoints/sfe_replacement_original_modules_label12_vv
 
 dataset:
   type: ipix_window
-  data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related_stats_train_only
+  data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related
   sources: [19931118_162155_stareC0000]
   polarizations: [vv]
 
