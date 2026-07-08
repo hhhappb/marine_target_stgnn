@@ -40,6 +40,7 @@ def train_one_epoch(
     epochs: int,
     show_progress: bool,
     log_interval: int,
+    grad_clip: float | None,
 ) -> tuple[float, dict[str, float]]:
     model.train()
     total_loss = 0.0
@@ -65,7 +66,8 @@ def train_one_epoch(
             logits = model(echoes)
             loss = criterion(logits, labels)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            if grad_clip is not None and grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             optimizer.step()
 
             loss_value = float(loss.item())
@@ -316,6 +318,28 @@ def load_checkpoint(path: Path, model: nn.Module, device: torch.device) -> None:
     model.load_state_dict(state)
 
 
+def build_optimizer(config: dict[str, Any], model: nn.Module) -> optim.Optimizer:
+    train_cfg = config.get("train", {})
+    optimizer_type = str(train_cfg.get("optimizer", "adamw")).lower()
+    lr = float(get_config_value(config, "train.learning_rate"))
+    weight_decay = float(train_cfg.get("weight_decay", 1e-4 if optimizer_type == "adamw" else 0.0))
+    if optimizer_type == "adamw":
+        return optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    if optimizer_type == "adam":
+        return optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    raise ValueError(f"未知 optimizer: {optimizer_type}")
+
+
+def build_scheduler(config: dict[str, Any], optimizer: optim.Optimizer, epochs: int):
+    train_cfg = config.get("train", {})
+    scheduler_type = str(train_cfg.get("scheduler", "cosine")).lower()
+    if scheduler_type in {"none", "null", "off"}:
+        return None
+    if scheduler_type == "cosine":
+        return optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, epochs))
+    raise ValueError(f"未知 scheduler: {scheduler_type}")
+
+
 def write_config_snapshot(path: Path, config: dict[str, Any]) -> None:
     try:
         import yaml
@@ -411,10 +435,18 @@ def main() -> None:
             pin_memory=torch.cuda.is_available(),
             persistent_workers=int(get_config_value(config, "train.num_workers")) > 0,
         )
-        criterion = build_loss(config, train_dataset.class_weights().to(device))
-        optimizer = optim.AdamW(model.parameters(), lr=float(get_config_value(config, "train.learning_rate")), weight_decay=1e-4)
+        use_class_weights = bool(config.get("loss", {}).get("use_class_weights", True))
+        class_weights = train_dataset.class_weights().to(device) if use_class_weights else None
+        criterion = build_loss(config, class_weights)
+        if use_class_weights:
+            print(f"Loss class weights: {train_dataset.class_weights().tolist()}", flush=True)
+        else:
+            print("Loss class weights: disabled", flush=True)
+        optimizer = build_optimizer(config, model)
         epochs = int(get_config_value(config, "train.epochs"))
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, epochs))
+        scheduler = build_scheduler(config, optimizer, epochs)
+        grad_clip_raw = config.get("train", {}).get("grad_clip", 1.0)
+        grad_clip = None if grad_clip_raw is None else float(grad_clip_raw)
         best_loss = float("inf")
         best_path = save_dir / "best_model.pth"
         t0 = time.time()
@@ -429,8 +461,10 @@ def main() -> None:
                 epochs,
                 not args.no_progress,
                 args.log_interval,
+                grad_clip,
             )
-            scheduler.step()
+            if scheduler is not None:
+                scheduler.step()
             print(
                 f"Epoch {epoch + 1:03d}/{epochs} | loss={loss:.6f} "
                 f"| acc={metrics['accuracy']:.4f} | PD={metrics['pd']:.4f} | PF={metrics['pf']:.4f} "
@@ -538,6 +572,10 @@ def run_metadata(
         "sources": sources or [],
         "polarizations": _as_list(pols) or [],
         "train_augmentation": dataset_cfg.get("augment", {}),
+        "optimizer": config.get("train", {}).get("optimizer", "adamw"),
+        "scheduler": config.get("train", {}).get("scheduler", "cosine"),
+        "grad_clip": config.get("train", {}).get("grad_clip", 1.0),
+        "loss_use_class_weights": config.get("loss", {}).get("use_class_weights", True),
         "num_train_files": len(train_files),
         "num_test_files": len(test_files),
         "train_files": [str(path) for path in train_files],
