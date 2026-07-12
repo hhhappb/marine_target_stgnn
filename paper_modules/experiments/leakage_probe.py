@@ -15,20 +15,36 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 import numpy as np
+import scipy.io as sio
 import torch
 import torch.nn as nn
 
 from paper_modules.experiments.train import git_commit, load_checkpoint
 from paper_modules.datasets.ipix_window import list_split_files, load_ipix_arrays, parse_source_and_pol, seed_everything
+from paper_modules.datasets.scr_npz import (
+    SDRDSP_LOCAL_CROP_PROTOCOLS,
+    SDRDSP_V2_PROTOCOL,
+    list_test_scr_files,
+    load_scr_arrays,
+    validate_sdrdsp_v2_manifest,
+)
 from paper_modules.models import build_model
 from utils.config import get_config_value, load_config
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Probe IPIX position-memory leakage with an existing checkpoint.")
+    parser = argparse.ArgumentParser(description="使用已有 checkpoint 诊断 IPIX/SDRDSP 数据捷径。")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--target-pfa", type=float, default=0.001)
+    parser.add_argument("--pfa-values", type=float, nargs="+", default=[0.0001, 0.001, 0.01])
+    parser.add_argument(
+        "--probes",
+        choices=["d1", "d2", "d3", "d4", "cross"],
+        nargs="+",
+        default=["d1", "d2", "d3"],
+    )
+    parser.add_argument("--cross-test-data-dirs", type=Path, nargs="+", default=None)
     parser.add_argument("--shifts", type=int, nargs="+", default=[2, 3])
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--max-test-windows-per-file", type=int, default=None)
@@ -45,6 +61,16 @@ def main() -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dataset_cfg = config.get("dataset", {})
+    dataset_type = str(dataset_cfg.get("type", "ipix_window"))
+    if not args.checkpoint.exists():
+        raise SystemExit(f"Checkpoint not found: {args.checkpoint}")
+    if dataset_type == "scr_npz":
+        run_sdrdsp_probes(args, config, device, seed)
+        return
+    if dataset_type != "ipix_window":
+        raise ValueError(f"leakage_probe 不支持 dataset.type={dataset_type!r}。")
+    if args.probes != ["d1", "d2", "d3"] or args.pfa_values != [0.0001, 0.001, 0.01]:
+        raise ValueError("--probes/--pfa-values 仅用于 SDRDSP scr_npz 诊断。")
     data_dir = Path(dataset_cfg.get("data_dir", get_config_value(config, "paths.data_dir")))
     pols = _as_list(dataset_cfg.get("polarizations", get_config_value(config, "ipix.polarizations"))) or []
     sources = _as_list(dataset_cfg.get("sources", dataset_cfg.get("source")))
@@ -55,9 +81,6 @@ def main() -> None:
         raise SystemExit(f"No train files found under {data_dir}")
     if not test_files:
         raise SystemExit(f"No test files found under {data_dir}")
-    if not args.checkpoint.exists():
-        raise SystemExit(f"Checkpoint not found: {args.checkpoint}")
-
     model = build_model(config).to(device)
     load_checkpoint(args.checkpoint, model, device)
     model.eval()
@@ -137,6 +160,701 @@ def main() -> None:
     output_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
     print_summary(results)
     print(f"Saved leakage probe results: {output_path}", flush=True)
+
+
+def run_sdrdsp_probes(
+    args: argparse.Namespace,
+    config: dict[str, Any],
+    device: torch.device,
+    seed: int,
+) -> None:
+    """在冻结 checkpoint 上运行 SDRDSP D1-D3 诊断，不改变训练数据或模型。"""
+    dataset_cfg = config.get("dataset", {})
+    data_dir = Path(dataset_cfg.get("data_dir", get_config_value(config, "paths.data_dir")))
+    protocol = str(dataset_cfg.get("protocol", ""))
+    if protocol not in SDRDSP_LOCAL_CROP_PROTOCOLS:
+        raise ValueError(f"SDRDSP 捷径诊断不支持 protocol={protocol!r}。")
+    if any(probe in args.probes for probe in ("d1", "d2", "d3", "d4")) and protocol != SDRDSP_V2_PROTOCOL:
+        raise ValueError("D1-D4 必须以理想目标 sdrdsp_fig9_local_crop_v2 为训练/测试协议。")
+    if "cross" in args.probes and not args.cross_test_data_dirs:
+        raise ValueError("cross 探针需要 --cross-test-data-dirs。")
+    pfa_values = validate_pfa_values(args.pfa_values)
+    if args.target_pfa not in pfa_values:
+        raise ValueError("--target-pfa 必须同时出现在 --pfa-values 中。")
+    if "d2" in args.probes:
+        if not args.shifts or any(shift == 0 for shift in args.shifts):
+            raise ValueError("D2 的 --shifts 必须是非零距离平移量。")
+        if len(set(args.shifts)) != len(args.shifts):
+            raise ValueError("D2 的 --shifts 不允许重复。")
+
+    pulses = int(get_config_value(config, "model.pulses"))
+    range_cells = int(get_config_value(config, "model.range_cells"))
+    if "d2" in args.probes:
+        normalized_shifts = [shift % range_cells for shift in args.shifts]
+        if any(shift == 0 for shift in normalized_shifts):
+            raise ValueError(f"D2 shift 不能是 range_cells={range_cells} 的整数倍。")
+        if len(set(normalized_shifts)) != len(normalized_shifts):
+            raise ValueError("D2 shifts 在循环距离维上存在等价重复。")
+    manifest = validate_sdrdsp_v2_manifest(data_dir, pulses, range_cells)
+    batch_size = args.batch_size or int(get_config_value(config, "train.batch_size"))
+    if batch_size <= 0:
+        raise ValueError(f"batch_size 必须为正整数，实际为 {batch_size}。")
+
+    model = build_model(config).to(device)
+    load_checkpoint(args.checkpoint, model, device)
+    model.eval()
+
+    train_x, train_y, _ = load_scr_arrays(
+        data_dir,
+        "train",
+        max_windows=args.max_threshold_windows,
+        rng=np.random.default_rng(seed),
+        require_scr_metadata=True,
+    )
+    train_scores = infer_sdrdsp_score_spaces(model, train_x, batch_size, device)
+    train_clutter = {name: values[train_y == 0] for name, values in train_scores.items()}
+    del train_x, train_y, train_scores
+    if any(values.size == 0 for values in train_clutter.values()):
+        raise ValueError("SDRDSP 训练集没有可用杂波分数，无法校准阈值。")
+
+    test_files = list_test_scr_files(data_dir)
+    baseline_records = collect_sdrdsp_records(
+        model,
+        test_files,
+        batch_size,
+        device,
+        args.max_test_windows_per_file,
+        seed,
+        variant="original",
+    )
+
+    calibrations = {
+        score_name: {
+            str(pfa): strict_rank_threshold(clutter_scores, pfa)
+            for pfa in pfa_values
+        }
+        for score_name, clutter_scores in train_clutter.items()
+    }
+    results: dict[str, Any] = {
+        "protocol": "sdrdsp_shortcut_probe_v1",
+        "config": str(args.config),
+        "checkpoint": str(args.checkpoint),
+        "git_commit": git_commit(),
+        "device": str(device),
+        "data_dir": str(data_dir),
+        "dataset_protocol": protocol,
+        "probes": args.probes,
+        "pfa_values": pfa_values,
+        "target_pfa": args.target_pfa,
+        "score_direction": "score <= threshold means target",
+        "primary_score": "logit_clutter_minus_target",
+        "threshold_source": "train_clutter",
+        "threshold_rule": "strict_rank_floor_budget_excluding_boundary_ties",
+        "num_clutter_bins_for_threshold": int(train_clutter["logit_margin"].size),
+        "max_threshold_windows": args.max_threshold_windows,
+        "max_test_windows_per_file": args.max_test_windows_per_file,
+        "calibration": calibrations,
+        "baseline_logit_margin": {
+            "pfa": {
+                str(pfa): evaluate_sdrdsp_records(
+                    baseline_records,
+                    "logit_margin",
+                    calibrations["logit_margin"][str(pfa)]["threshold"],
+                )
+                for pfa in pfa_values
+            }
+        },
+    }
+
+    if "d1" in args.probes:
+        results["d1_stable_threshold"] = build_d1_results(
+            train_clutter,
+            baseline_records,
+            calibrations,
+            pfa_values,
+        )
+    if "d2" in args.probes:
+        results["d2_range_position"] = build_d2_results(
+            model,
+            test_files,
+            batch_size,
+            device,
+            args.max_test_windows_per_file,
+            seed,
+            args.shifts,
+            calibrations["logit_margin"],
+            pfa_values,
+        )
+    if "d3" in args.probes:
+        results["d3_target_phase"] = build_d3_results(
+            model,
+            test_files,
+            batch_size,
+            device,
+            args.max_test_windows_per_file,
+            seed,
+            calibrations["logit_margin"],
+            pfa_values,
+        )
+    if "d4" in args.probes:
+        results["d4_exact_target_removal"] = build_d4_results(
+            model,
+            test_files,
+            batch_size,
+            device,
+            args.max_test_windows_per_file,
+            calibrations["logit_margin"],
+            pfa_values,
+            manifest,
+        )
+    if "cross" in args.probes:
+        results["cross_domain"] = build_cross_domain_results(
+            model=model,
+            train_data_dir=data_dir,
+            test_data_dirs=args.cross_test_data_dirs,
+            batch_size=batch_size,
+            device=device,
+            max_windows_per_file=args.max_test_windows_per_file,
+            seed=seed,
+            calibrations=calibrations["logit_margin"],
+            pfa_values=pfa_values,
+            pulses=pulses,
+            range_cells=range_cells,
+        )
+
+    output_path = args.output or default_sdrdsp_output_path()
+    if output_path.exists():
+        raise FileExistsError(f"拒绝覆盖已有诊断结果: {output_path}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
+    print_sdrdsp_summary(results)
+    print(f"Saved SDRDSP shortcut probe results: {output_path}", flush=True)
+
+
+def validate_pfa_values(values: list[float]) -> list[float]:
+    pfa_values = [float(value) for value in values]
+    if not pfa_values or any(not 0.0 < value < 1.0 for value in pfa_values):
+        raise ValueError(f"Pfa 必须全部位于 (0, 1)，实际为 {pfa_values}。")
+    if len(set(pfa_values)) != len(pfa_values):
+        raise ValueError(f"Pfa 不允许重复，实际为 {pfa_values}。")
+    return pfa_values
+
+
+def infer_sdrdsp_score_spaces(
+    model: nn.Module,
+    x: np.ndarray,
+    batch_size: int,
+    device: torch.device,
+) -> dict[str, np.ndarray]:
+    if x.ndim != 4 or x.shape[1] != 2:
+        raise ValueError(f"SDRDSP X shape 应为 [B, 2, P, N]，实际为 {x.shape}。")
+    margin_parts: list[np.ndarray] = []
+    softmax_parts: list[np.ndarray] = []
+    with torch.no_grad():
+        for start in range(0, len(x), batch_size):
+            batch = x[start : start + batch_size]
+            real = torch.from_numpy(batch[:, 0].astype(np.float32, copy=False)).to(device)
+            imag = torch.from_numpy(batch[:, 1].astype(np.float32, copy=False)).to(device)
+            logits = model(torch.complex(real, imag))
+            if logits.ndim != 3 or logits.shape[1] != 2:
+                raise ValueError(f"模型输出应为 [B, 2, N]，实际为 {tuple(logits.shape)}。")
+            margin_parts.append((logits[:, 0, :] - logits[:, 1, :]).cpu().numpy().astype(np.float64))
+            softmax_parts.append(
+                torch.softmax(logits, dim=1)[:, 0, :].cpu().numpy().astype(np.float64)
+            )
+    if not margin_parts:
+        raise ValueError("SDRDSP 输入为空，无法推理分数。")
+    return {
+        "logit_margin": np.concatenate(margin_parts, axis=0),
+        "softmax_clutter": np.concatenate(softmax_parts, axis=0),
+    }
+
+
+def strict_rank_threshold(scores: np.ndarray, target_pfa: float) -> dict[str, Any]:
+    """选择不超过虚警预算的阈值；边界并列时整体排除该并列组。"""
+    flat = np.asarray(scores, dtype=np.float64).reshape(-1)
+    if flat.size == 0 or not np.all(np.isfinite(flat)):
+        raise ValueError("阈值分数必须是非空有限数组。")
+    if not 0.0 < target_pfa < 1.0:
+        raise ValueError(f"target_pfa 必须位于 (0, 1)，实际为 {target_pfa}。")
+    ordered = np.sort(flat)
+    budget = int(np.floor(target_pfa * len(ordered)))
+    if budget == 0:
+        boundary = float(ordered[0])
+        threshold = float(np.nextafter(boundary, -np.inf))
+        boundary_tie_count = int(np.count_nonzero(ordered == boundary))
+    else:
+        boundary = float(ordered[budget - 1])
+        inclusive_count = int(np.searchsorted(ordered, boundary, side="right"))
+        boundary_tie_count = int(np.count_nonzero(ordered == boundary))
+        threshold = boundary if inclusive_count <= budget else float(np.nextafter(boundary, -np.inf))
+    selected = int(np.count_nonzero(flat <= threshold))
+    return {
+        "target_pfa": float(target_pfa),
+        "threshold": threshold,
+        "num_scores": int(flat.size),
+        "false_alarm_budget": budget,
+        "selected_clutter_bins": selected,
+        "calibration_actual_pf": selected / flat.size,
+        "boundary_value": boundary,
+        "boundary_tie_count": boundary_tie_count,
+        "boundary_tie_excluded": bool(threshold < boundary),
+    }
+
+
+def collect_sdrdsp_records(
+    model: nn.Module,
+    files: list[Path],
+    batch_size: int,
+    device: torch.device,
+    max_windows_per_file: int | None,
+    seed: int,
+    variant: str,
+    shift: int | None = None,
+) -> list[dict[str, Any]]:
+    rng = np.random.default_rng(seed)
+    transform_rng = np.random.default_rng(seed + 10_003)
+    records: list[dict[str, Any]] = []
+    for path in files:
+        scr = int(path.stem.replace("test_scr_", ""))
+        x, y, _ = load_scr_arrays(
+            path.parent,
+            "test",
+            scr=scr,
+            max_windows=max_windows_per_file,
+            rng=rng,
+            require_scr_metadata=True,
+        )
+        original_labels = y
+        labels = y
+        if variant == "range_shift":
+            if shift is None or shift == 0:
+                raise ValueError("range_shift 需要非零 shift。")
+            x = np.roll(x, shift=shift, axis=3)
+            labels = np.roll(y, shift=shift, axis=1)
+        elif variant in {"target_pulse_shuffle", "target_phase_random"}:
+            x = transform_target_cells(x, y, variant, transform_rng)
+        elif variant != "original":
+            raise ValueError(f"未知 SDRDSP probe variant: {variant}")
+        scores = infer_sdrdsp_score_spaces(model, x, batch_size, device)
+        records.append(
+            {
+                "scr_db": scr,
+                "labels": labels,
+                "original_labels": original_labels,
+                **scores,
+            }
+        )
+    return records
+
+
+def transform_target_cells(
+    x: np.ndarray,
+    labels: np.ndarray,
+    mode: str,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """仅变换标签目标单元；非目标单元保持逐值不变。"""
+    if x.ndim != 4 or x.shape[1] != 2 or labels.shape != (len(x), x.shape[-1]):
+        raise ValueError(f"目标相位变换 shape 不匹配: X={x.shape}, y={labels.shape}。")
+    transformed = x.copy()
+    complex_x = x[:, 0].astype(np.float64) + 1j * x[:, 1].astype(np.float64)
+    for window_idx in range(len(x)):
+        targets = np.flatnonzero(labels[window_idx] == 1)
+        for target in targets:
+            values = complex_x[window_idx, :, target]
+            if mode == "target_pulse_shuffle":
+                permutation = rng.permutation(len(values))
+                if len(values) > 1 and np.array_equal(permutation, np.arange(len(values))):
+                    permutation = np.roll(permutation, 1)
+                changed = values[permutation]
+            elif mode == "target_phase_random":
+                phases = rng.uniform(-np.pi, np.pi, size=len(values))
+                changed = np.abs(values) * np.exp(1j * phases)
+            else:
+                raise ValueError(f"未知目标相位变换: {mode}")
+            transformed[window_idx, 0, :, target] = changed.real.astype(np.float32)
+            transformed[window_idx, 1, :, target] = changed.imag.astype(np.float32)
+    return transformed
+
+
+def evaluate_sdrdsp_records(
+    records: list[dict[str, Any]],
+    score_name: str,
+    threshold: float,
+    label_name: str = "labels",
+) -> dict[str, Any]:
+    total = empty_counts()
+    per_scr: list[dict[str, Any]] = []
+    for item in records:
+        labels = item[label_name]
+        det = (item[score_name] <= threshold).astype(np.uint8)
+        counts = count_detection(det, labels)
+        add_counts(total, counts)
+        per_scr.append({"scr_db": item["scr_db"], **pd_pf(counts), **counts})
+    return {**pd_pf(total), **total, "per_scr": per_scr}
+
+
+def build_d1_results(
+    train_clutter: dict[str, np.ndarray],
+    records: list[dict[str, Any]],
+    calibrations: dict[str, dict[str, dict[str, Any]]],
+    pfa_values: list[float],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {"score_spaces": {}}
+    for score_name, clutter_scores in train_clutter.items():
+        score_result: dict[str, Any] = {
+            "num_unique_train_clutter_scores": int(np.unique(clutter_scores).size),
+            "unique_fraction": float(np.unique(clutter_scores).size / clutter_scores.size),
+            "num_exact_one": int(np.count_nonzero(clutter_scores == 1.0)),
+            "pfa": {},
+        }
+        for pfa in pfa_values:
+            calibration = calibrations[score_name][str(pfa)]
+            score_result["pfa"][str(pfa)] = {
+                **calibration,
+                "test": evaluate_sdrdsp_records(records, score_name, calibration["threshold"]),
+            }
+        result["score_spaces"][score_name] = score_result
+    result["interpretation"] = (
+        "正式诊断使用 logit_margin；softmax_clutter 仅用于量化概率饱和。"
+        "若 softmax 大量等于 1 而 logit_margin 保持可排序，则原 Pfa=0.01 坍缩属于数值/并列阈值问题。"
+    )
+    return result
+
+
+def build_d2_results(
+    model: nn.Module,
+    files: list[Path],
+    batch_size: int,
+    device: torch.device,
+    max_windows_per_file: int | None,
+    seed: int,
+    shifts: list[int],
+    calibrations: dict[str, dict[str, Any]],
+    pfa_values: list[float],
+) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    for shift in shifts:
+        records = collect_sdrdsp_records(
+            model,
+            files,
+            batch_size,
+            device,
+            max_windows_per_file,
+            seed,
+            variant="range_shift",
+            shift=shift,
+        )
+        pfa_result: dict[str, Any] = {}
+        for pfa in pfa_values:
+            threshold = calibrations[str(pfa)]["threshold"]
+            pfa_result[str(pfa)] = {
+                "metrics_vs_shifted_labels": evaluate_sdrdsp_records(
+                    records, "logit_margin", threshold, "labels"
+                ),
+                "metrics_vs_original_labels": evaluate_sdrdsp_records(
+                    records, "logit_margin", threshold, "original_labels"
+                ),
+            }
+        items.append({"shift": shift, "pfa": pfa_result})
+    return {
+        "variant": "circular_range_shift_all_echoes",
+        "items": items,
+        "interpretation": (
+            "平移标签 PD 高且原标签 PD 低，说明报警跟随回波；原标签 PD 仍高则提示固定距离位置记忆。"
+            "该探针循环平移整幅距离像，因此只用于位置记忆诊断，不代表真实目标迁移性能。"
+        ),
+    }
+
+
+def build_d3_results(
+    model: nn.Module,
+    files: list[Path],
+    batch_size: int,
+    device: torch.device,
+    max_windows_per_file: int | None,
+    seed: int,
+    calibrations: dict[str, dict[str, Any]],
+    pfa_values: list[float],
+) -> dict[str, Any]:
+    variants: dict[str, Any] = {}
+    for variant in ("target_pulse_shuffle", "target_phase_random"):
+        records = collect_sdrdsp_records(
+            model,
+            files,
+            batch_size,
+            device,
+            max_windows_per_file,
+            seed,
+            variant=variant,
+        )
+        variants[variant] = {
+            "pfa": {
+                str(pfa): evaluate_sdrdsp_records(
+                    records,
+                    "logit_margin",
+                    calibrations[str(pfa)]["threshold"],
+                )
+                for pfa in pfa_values
+            }
+        }
+    return {
+        "variants": variants,
+        "non_target_cells_unchanged": True,
+        "interpretation": (
+            "pulse_shuffle 保留目标单元四个复数样本但打乱顺序；phase_random 保留目标单元总幅度并随机化相位。"
+            "两者只改标签目标单元，是诊断代理，不等价于重新生成物理目标。"
+        ),
+    }
+
+
+def build_d4_results(
+    model: nn.Module,
+    files: list[Path],
+    batch_size: int,
+    device: torch.device,
+    max_windows_per_file: int | None,
+    calibrations: dict[str, dict[str, Any]],
+    pfa_values: list[float],
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    """精确减去理想注入项，并与原始测试背景逐值核验。"""
+    raw_windows = load_raw_test_windows(manifest, max_windows_per_file)
+    records: list[dict[str, Any]] = []
+    max_abs_residual = 0.0
+    squared_residual = 0.0
+    squared_raw = 0.0
+    strict_allclose = True
+    ulp_aware_allclose = True
+    max_residual_ulps = 0.0
+    for path in files:
+        scr = int(path.stem.replace("test_scr_", ""))
+        x, y, _ = load_scr_arrays(
+            path.parent,
+            "test",
+            scr=scr,
+            max_windows=max_windows_per_file,
+            rng=np.random.default_rng(0),
+            require_scr_metadata=True,
+        )
+        removed = remove_ideal_test_target(x, scr, manifest)
+        raw = raw_windows[: len(removed)]
+        residual = removed.astype(np.float64) - raw.astype(np.float64)
+        max_abs_residual = max(max_abs_residual, float(np.max(np.abs(residual))))
+        squared_residual += float(np.sum(residual * residual, dtype=np.float64))
+        squared_raw += float(np.sum(raw.astype(np.float64) ** 2, dtype=np.float64))
+        strict_allclose = strict_allclose and bool(np.allclose(removed, raw, rtol=1e-6, atol=1e-3))
+        scale = np.maximum(np.abs(x), np.abs(raw)).astype(np.float32)
+        ulp = np.spacing(scale).astype(np.float64)
+        ulp_limit = 2.0 * ulp + np.finfo(np.float32).tiny
+        ulp_aware_allclose = ulp_aware_allclose and bool(np.all(np.abs(residual) <= ulp_limit))
+        positive_ulp = ulp > 0
+        if np.any(positive_ulp):
+            max_residual_ulps = max(
+                max_residual_ulps,
+                float(np.max(np.abs(residual[positive_ulp]) / ulp[positive_ulp])),
+            )
+        scores = infer_sdrdsp_score_spaces(model, removed, batch_size, device)
+        records.append({"scr_db": scr, "labels": np.zeros_like(y), "former_labels": y, **scores})
+    if not ulp_aware_allclose:
+        raise ValueError(
+            f"D4 删除注入项后超出 2 ULP 舍入上限: max_abs_residual={max_abs_residual:.6g}, "
+            f"max_residual_ulps={max_residual_ulps:.3f}。"
+        )
+
+    pfa_result: dict[str, Any] = {}
+    for pfa in pfa_values:
+        threshold = calibrations[str(pfa)]["threshold"]
+        clutter_metrics = evaluate_sdrdsp_records(records, "logit_margin", threshold)
+        former_target_alarms = 0
+        former_target_bins = 0
+        per_scr = []
+        for item in records:
+            det = item["logit_margin"] <= threshold
+            mask = item["former_labels"] == 1
+            alarms = int(np.count_nonzero(det & mask))
+            bins = int(np.count_nonzero(mask))
+            former_target_alarms += alarms
+            former_target_bins += bins
+            per_scr.append({"scr_db": item["scr_db"], "alarm_rate": alarms / bins, "alarms": alarms, "bins": bins})
+        pfa_result[str(pfa)] = {
+            "threshold": threshold,
+            "all_background_metrics": clutter_metrics,
+            "former_target_alarm_rate": former_target_alarms / former_target_bins,
+            "former_target_alarms": former_target_alarms,
+            "former_target_bins": former_target_bins,
+            "per_scr": per_scr,
+        }
+    return {
+        "removal": "subtract_reconstructed_ideal_complex_target_component",
+        "raw_background_allclose_rtol": 1e-6,
+        "raw_background_allclose_atol": 1e-3,
+        "raw_background_strict_allclose": strict_allclose,
+        "raw_background_ulp_aware_allclose": ulp_aware_allclose,
+        "raw_background_ulp_limit": 2.0,
+        "max_abs_residual": max_abs_residual,
+        "max_residual_ulps": max_residual_ulps,
+        "relative_l2_residual": float(np.sqrt(squared_residual / squared_raw)),
+        "pfa": pfa_result,
+    }
+
+
+def load_raw_test_windows(manifest: dict[str, Any], max_windows: int | None) -> np.ndarray:
+    source = Path(manifest["source_files"]["test_background"])
+    key = str(manifest["source_files"]["mat_key"])
+    payload = sio.loadmat(source)
+    if key not in payload:
+        raise KeyError(f"D4 原始测试文件缺少 {key!r}: {source}。")
+    crop = manifest["crop"]
+    clutter = np.asarray(payload[key])[:, int(crop["crop_start_zero_based"]) : int(crop["crop_end_exclusive_zero_based"])]
+    pulses = int(manifest["protocol"]["pulses"])
+    starts = list(range(0, len(clutter) - pulses + 1, pulses))
+    if max_windows is not None:
+        starts = starts[:max_windows]
+    return np.stack(
+        [np.stack([clutter[start : start + pulses].real, clutter[start : start + pulses].imag]) for start in starts]
+    ).astype(np.float32)
+
+
+def remove_ideal_test_target(x: np.ndarray, scr: int, manifest: dict[str, Any]) -> np.ndarray:
+    audit = manifest["audit"]["test_injection_by_scr"][str(scr)]
+    record = audit["target_records"][0]
+    pulses = int(manifest["protocol"]["pulses"])
+    speed = float(record["speed_mps"])
+    amplitude = float(record["target_amplitude"])
+    prt = float(manifest["protocol"]["prt_seconds"])
+    wavelength = float(manifest["protocol"]["wavelength_m"])
+    target = int(record["target_position_local_zero_based"])
+    pulse_indices = np.arange(len(x) * pulses, dtype=np.float64)
+    signal = amplitude * np.exp(1j * 4.0 * np.pi * speed * prt * pulse_indices / wavelength)
+    removed = x.copy()
+    values = removed[:, 0, :, target].astype(np.float64) + 1j * removed[:, 1, :, target].astype(np.float64)
+    values -= signal.reshape(len(x), pulses)
+    removed[:, 0, :, target] = values.real.astype(np.float32)
+    removed[:, 1, :, target] = values.imag.astype(np.float32)
+    return removed
+
+
+def build_cross_domain_results(
+    model: nn.Module,
+    train_data_dir: Path,
+    test_data_dirs: list[Path],
+    batch_size: int,
+    device: torch.device,
+    max_windows_per_file: int | None,
+    seed: int,
+    calibrations: dict[str, dict[str, Any]],
+    pfa_values: list[float],
+    pulses: int,
+    range_cells: int,
+) -> dict[str, Any]:
+    train_manifest = validate_sdrdsp_v2_manifest(train_data_dir, pulses, range_cells)
+    domains: list[dict[str, Any]] = []
+    for test_dir in test_data_dirs:
+        test_manifest = validate_sdrdsp_v2_manifest(test_dir, pulses, range_cells)
+        records = collect_sdrdsp_records(
+            model,
+            list_test_scr_files(test_dir),
+            batch_size,
+            device,
+            max_windows_per_file,
+            seed,
+            variant="original",
+        )
+        pfa_payload: dict[str, Any] = {}
+        for pfa in pfa_values:
+            metrics = evaluate_sdrdsp_records(records, "logit_margin", calibrations[str(pfa)]["threshold"])
+            low = [item for item in metrics["per_scr"] if item["scr_db"] in {-24, -22, -20, -18, -16}]
+            pfa_payload[str(pfa)] = {
+                "threshold": calibrations[str(pfa)]["threshold"],
+                "metrics": metrics,
+                "low_scr_mean_pd": float(np.mean([item["PD"] for item in low])),
+                "low_scr_pd_auc": float(
+                    np.trapezoid([item["PD"] for item in low], [item["scr_db"] for item in low])
+                ),
+                "pf_guardrail_pass": bool(metrics["PF"] <= 2.0 * pfa),
+            }
+        domains.append(
+            {
+                "test_data_dir": str(test_dir),
+                "test_protocol": test_manifest["protocol"]["id"],
+                "pfa": pfa_payload,
+            }
+        )
+    return {
+        "train_data_dir": str(train_data_dir),
+        "train_protocol": train_manifest["protocol"]["id"],
+        "threshold_source": "train_clutter_logit_margin",
+        "domains": domains,
+    }
+
+
+def default_sdrdsp_output_path() -> Path:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return Path("logs") / "training" / f"{stamp}_sdrdsp_shortcut_probe" / "probe_results.json"
+
+
+def print_sdrdsp_summary(results: dict[str, Any]) -> None:
+    print("SDRDSP shortcut probe summary", flush=True)
+    print(
+        f"checkpoint={results['checkpoint']} | threshold_source={results['threshold_source']} "
+        f"| threshold_bins={results['num_clutter_bins_for_threshold']}",
+        flush=True,
+    )
+    d1 = results.get("d1_stable_threshold")
+    if d1:
+        for score_name, score_result in d1["score_spaces"].items():
+            print(
+                f"D1 {score_name} | unique_fraction={score_result['unique_fraction']:.6f} "
+                f"| exact_one={score_result['num_exact_one']}",
+                flush=True,
+            )
+            for pfa, item in score_result["pfa"].items():
+                test = item["test"]
+                print(
+                    f"  Pfa={pfa} | threshold={item['threshold']:.8g} "
+                    f"| calibration_PF={item['calibration_actual_pf']:.6g} "
+                    f"| test_PD={test['PD']:.4f} | test_PF={test['PF']:.6f}",
+                    flush=True,
+                )
+    d2 = results.get("d2_range_position")
+    if d2:
+        pfa = str(results["target_pfa"])
+        for item in d2["items"]:
+            shifted = item["pfa"][pfa]["metrics_vs_shifted_labels"]
+            original = item["pfa"][pfa]["metrics_vs_original_labels"]
+            print(
+                f"D2 shift={item['shift']} | shifted-label PD={shifted['PD']:.4f}, PF={shifted['PF']:.6f} "
+                f"| original-label PD={original['PD']:.4f}",
+                flush=True,
+            )
+    d3 = results.get("d3_target_phase")
+    if d3:
+        pfa = str(results["target_pfa"])
+        for variant, item in d3["variants"].items():
+            metrics = item["pfa"][pfa]
+            print(f"D3 {variant} | PD={metrics['PD']:.4f} | PF={metrics['PF']:.6f}", flush=True)
+    d4 = results.get("d4_exact_target_removal")
+    if d4:
+        item = d4["pfa"][str(results["target_pfa"])]
+        print(
+            f"D4 removal | residual={d4['max_abs_residual']:.6g} "
+            f"| global_PF={item['all_background_metrics']['PF']:.6f} "
+            f"| former-target alarm={item['former_target_alarm_rate']:.6f}",
+            flush=True,
+        )
+    cross = results.get("cross_domain")
+    if cross:
+        pfa = str(results["target_pfa"])
+        for domain in cross["domains"]:
+            item = domain["pfa"][pfa]
+            print(
+                f"cross {cross['train_protocol']} -> {domain['test_protocol']} "
+                f"| low-SCR PD={item['low_scr_mean_pd']:.4f} "
+                f"| PF={item['metrics']['PF']:.6f} | guardrail={item['pf_guardrail_pass']}",
+                flush=True,
+            )
 
 
 def compute_train_clutter_threshold(

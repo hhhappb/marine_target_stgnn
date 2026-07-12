@@ -1,0 +1,35 @@
+paths:
+  data_dir: data/sdrdsp_crop256_phase_rcs_v1
+  save_dir: logs/training/repro_original_stgnn_sdrdsp_phase_rcs_v1
+
+dataset:
+  type: scr_npz
+  data_dir: data/sdrdsp_crop256_phase_rcs_v1
+  protocol: sdrdsp_fig9_local_crop_phase_rcs_v1
+  normalization: none
+
+model:
+  name: original_stgnn
+  pulses: 4
+  range_cells: 256
+  gat_dropout: 0.0
+
+loss:
+  type: cross_entropy
+  use_class_weights: false
+
+train:
+  epochs: 100
+  batch_size: 24
+  learning_rate: 0.001
+  optimizer: adam
+  weight_decay: 0.0
+  scheduler: none
+  grad_clip: null
+  num_workers: 0
+  seed: 42
+
+eval:
+  protocol: pd_scr_curve
+  threshold_source: train
+  pfa_values: [0.0001, 0.001, 0.01]
