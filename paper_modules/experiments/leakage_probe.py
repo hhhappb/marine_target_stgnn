@@ -33,6 +33,7 @@ from paper_modules.datasets.scr_npz import (
     validate_sdrdsp_v2_manifest,
 )
 from paper_modules.models import build_model
+from paper_modules.models.modules.temporal_modules.lag_aware_anti_alias_tfe import LagAwareAntiAliasTFE
 from paper_modules.models.modules.temporal_modules.pulse_attention_tfe import PulseAttentionOnlyTFE
 from utils.config import get_config_value, load_config
 
@@ -54,6 +55,7 @@ def parse_args() -> argparse.Namespace:
             "scr_audit",
             "temporal_attention_audit",
             "attention_scale_scan",
+            "lag_matched_pf_diagnostic",
             "stage6_finalize",
         ],
         nargs="+",
@@ -75,6 +77,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--max-test-windows-per-file", type=int, default=None)
     parser.add_argument("--max-threshold-windows", type=int, default=None)
+    parser.add_argument(
+        "--matched-pf-values",
+        type=float,
+        nargs="+",
+        default=[0.000487, 0.00075, 0.001, 0.001286],
+    )
     parser.add_argument(
         "--attention-modes",
         choices=["learned", "uniform", "identity", "residual_off"],
@@ -120,10 +128,17 @@ def main() -> None:
             raise SystemExit(f"Checkpoint not found: {args.checkpoint}")
         run_attention_scale_scan(args, config, device, seed)
         return
+    if dataset_type == "scr_npz" and args.probes == ["lag_matched_pf_diagnostic"]:
+        if args.checkpoint is None or not args.checkpoint.exists():
+            raise SystemExit(f"Checkpoint not found: {args.checkpoint}")
+        run_lag_matched_pf_diagnostic(args, config, device, seed)
+        return
     if "temporal_attention_audit" in args.probes:
         raise ValueError("temporal_attention_audit 必须单独用于 SDRDSP scr_npz。")
     if "attention_scale_scan" in args.probes:
         raise ValueError("attention_scale_scan 必须单独用于 SDRDSP scr_npz。")
+    if "lag_matched_pf_diagnostic" in args.probes:
+        raise ValueError("lag_matched_pf_diagnostic 必须单独运行，不能与其他探针混用。")
     if "scr_audit" in args.probes:
         raise ValueError("scr_audit 必须单独运行，不能与模型推理探针混用。")
     if args.checkpoint is None or not args.checkpoint.exists():
@@ -1371,6 +1386,176 @@ def run_temporal_attention_audit(
     print(f"Saved temporal attention summary: {report_path}", flush=True)
 
 
+def run_lag_matched_pf_diagnostic(
+    args: argparse.Namespace,
+    config: dict[str, Any],
+    device: torch.device,
+    seed: int,
+) -> None:
+    """对冻结 P=16/P=32 checkpoint 做 test-diagnostic matched-PF 与 lag 诊断。"""
+    dataset_cfg = config.get("dataset", {})
+    data_dir = Path(dataset_cfg.get("data_dir", get_config_value(config, "paths.data_dir")))
+    protocol = str(dataset_cfg.get("protocol", ""))
+    if protocol != SDRDSP_V2_PROTOCOL:
+        raise ValueError("lag_matched_pf_diagnostic 只允许在 sdrdsp_fig9_local_crop_v2 上运行。")
+    pulses = int(get_config_value(config, "model.pulses"))
+    range_cells = int(get_config_value(config, "model.range_cells"))
+    if pulses not in {16, 32} or range_cells != 256:
+        raise ValueError(
+            "lag_matched_pf_diagnostic 当前只接受 P=16 或 P=32 且 N=256，"
+            f"实际为 P={pulses}, N={range_cells}。"
+        )
+    validate_sdrdsp_v2_manifest(data_dir, pulses, range_cells)
+    formal_pfa_values = validate_pfa_values(args.pfa_values)
+    matched_pf_values = validate_pfa_values(args.matched_pf_values)
+    if len(set(matched_pf_values)) != len(matched_pf_values):
+        raise ValueError(f"matched PF 不允许重复，实际为 {matched_pf_values}。")
+    batch_size = args.batch_size or int(get_config_value(config, "train.batch_size"))
+    if batch_size <= 0:
+        raise ValueError(f"batch_size 必须为正整数，实际为 {batch_size}。")
+
+    model = build_model(config).to(device)
+    load_checkpoint(args.checkpoint, model, device)
+    model.eval()
+
+    train_x, train_y, _ = load_scr_arrays(
+        data_dir,
+        "train",
+        max_windows=args.max_threshold_windows,
+        rng=np.random.default_rng(seed),
+        require_scr_metadata=True,
+    )
+    train_inferred = infer_lag_scores_and_diagnostics(model, train_x, batch_size, device)
+    train_clutter = train_inferred["scores"][train_y == 0]
+    if train_clutter.size == 0:
+        raise ValueError("训练集没有可用 clutter score，无法计算 train threshold。")
+
+    test_records: list[dict[str, Any]] = []
+    test_clutter_parts: list[np.ndarray] = []
+    lag_available = isinstance(_get_lag_module(model), LagAwareAntiAliasTFE)
+    lag_per_scr: list[dict[str, Any]] = []
+    lag_accumulator = _empty_lag_group_values()
+    for path in list_test_scr_files(data_dir):
+        scr = int(path.stem.replace("test_scr_", ""))
+        x, y, _ = load_scr_arrays(
+            data_dir,
+            "test",
+            scr=scr,
+            max_windows=args.max_test_windows_per_file,
+            rng=np.random.default_rng(seed),
+            require_scr_metadata=True,
+        )
+        inferred = infer_lag_scores_and_diagnostics(model, x, batch_size, device)
+        scores = inferred["scores"]
+        test_records.append({"scr_db": scr, "scores": scores, "labels": y})
+        test_clutter_parts.append(scores[y == 0])
+        if lag_available:
+            diagnostics = summarize_lag_groups(y, inferred["cell_diagnostics"])
+            append_lag_group_values(lag_accumulator, y, inferred["cell_diagnostics"])
+            lag_per_scr.append(
+                {
+                    "scr_db": scr,
+                    "num_windows": int(len(y)),
+                    "num_cells": int(y.size),
+                    "groups": diagnostics,
+                }
+            )
+        del x, y, inferred
+
+    test_clutter = np.concatenate(test_clutter_parts)
+    formal_results: dict[str, Any] = {}
+    for pfa in formal_pfa_values:
+        calibration = paper_order_stat_threshold(-train_clutter, pfa)
+        threshold_margin = -float(calibration["threshold"])
+        formal_results[str(pfa)] = {
+            "threshold_source": "train_clutter",
+            "score_space": "logit_margin_target_minus_clutter",
+            "threshold": threshold_margin,
+            "calibration": calibration,
+            "test": evaluate_margin_records(test_records, threshold_margin),
+        }
+
+    matched_results: dict[str, Any] = {}
+    for target_pf in matched_pf_values:
+        calibration = strict_rank_threshold(-test_clutter, target_pf)
+        threshold_margin = -float(calibration["threshold"])
+        matched_results[str(target_pf)] = {
+            "threshold_source": "test_diagnostic_clutter",
+            "score_space": "logit_margin_target_minus_clutter",
+            "requested_pf": float(target_pf),
+            "threshold": threshold_margin,
+            "calibration": calibration,
+            "test": evaluate_margin_records(test_records, threshold_margin),
+        }
+
+    all_scores = np.concatenate([item["scores"].reshape(-1) for item in test_records])
+    all_labels = np.concatenate([item["labels"].reshape(-1) for item in test_records])
+    roc = build_full_margin_roc(all_scores, all_labels)
+
+    output_path = args.output or default_lag_matched_pf_output_path()
+    roc_path = output_path.with_suffix(".npz")
+    if output_path.exists() or roc_path.exists():
+        raise FileExistsError(f"拒绝覆盖已有 lag matched-PF 诊断结果: {output_path} 或 {roc_path}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(roc_path, **roc)
+
+    results: dict[str, Any] = {
+        "protocol": "sdrdsp_lag_matched_pf_diagnostic_v1",
+        "diagnostic_role": "test_diagnostic",
+        "config": str(args.config),
+        "checkpoint": str(args.checkpoint),
+        "git_commit": git_commit(),
+        "device": str(device),
+        "data_dir": str(data_dir),
+        "dataset_protocol": protocol,
+        "pulses": pulses,
+        "range_cells": range_cells,
+        "seed": seed,
+        "batch_size": batch_size,
+        "max_threshold_windows": args.max_threshold_windows,
+        "max_test_windows_per_file": args.max_test_windows_per_file,
+        "formal_threshold_source": "train_clutter",
+        "formal_pfa_values": formal_pfa_values,
+        "formal_train_clutter_results": formal_results,
+        "matched_pf_values": matched_pf_values,
+        "matched_pf_results": matched_results,
+        "roc_data_path": str(roc_path),
+        "roc_data_definition": {
+            "score": "logit_target_minus_clutter",
+            "positive_decision": "score >= threshold",
+            "arrays": ["threshold", "PD", "PF", "TP", "FP", "num_target", "num_clutter"],
+            "threshold_order": "descending score; first point is no detections",
+        },
+        "test_counts": {
+            "num_scr_files": len(test_records),
+            "num_windows": int(sum(len(item["labels"]) for item in test_records)),
+            "num_cells": int(all_labels.size),
+            "num_target_cells": int(np.count_nonzero(all_labels == 1)),
+            "num_clutter_cells": int(np.count_nonzero(all_labels == 0)),
+        },
+        "lag_diagnostics": {
+            "available": lag_available,
+            "module": "LagAwareAntiAliasTFE" if lag_available else None,
+            "unit": "range_cell",
+            "metrics": [
+                "mixed_delta_ratio",
+                "enhanced_input_rms_ratio",
+                "input_high_frequency_ratio",
+                "mixed_high_frequency_ratio",
+            ],
+            "per_scr": lag_per_scr,
+            "all_test": finalize_lag_group_values(lag_accumulator) if lag_available else {},
+            "unavailable_reason": None if lag_available else "checkpoint TFE1 is original ST-GNN TFE without lag filter",
+        },
+    }
+    output_path.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
+    report_path = output_path.with_name("summary.md")
+    report_path.write_text(build_lag_matched_pf_report(results), encoding="utf-8")
+    print_lag_matched_pf_summary(results)
+    print(f"Saved lag matched-PF diagnostics: {output_path}", flush=True)
+    print(f"Saved full ROC arrays: {roc_path}", flush=True)
+
+
 def run_attention_scale_scan(
     args: argparse.Namespace,
     config: dict[str, Any],
@@ -1904,6 +2089,150 @@ def infer_temporal_audit_scores(
     return result
 
 
+def _get_lag_module(model: nn.Module) -> nn.Module | None:
+    temporal1 = getattr(model, "tfe1", None)
+    module = getattr(temporal1, "impl", None)
+    return module if isinstance(module, LagAwareAntiAliasTFE) else None
+
+
+def infer_lag_scores_and_diagnostics(
+    model: nn.Module,
+    x: np.ndarray,
+    batch_size: int,
+    device: torch.device,
+) -> dict[str, Any]:
+    """推理 target-minus-clutter score，并收集 lag 模块逐 cell 诊断。"""
+    if x.ndim != 4 or x.shape[1] != 2:
+        raise ValueError(f"SDRDSP X shape 应为 [B, 2, P, N]，实际为 {x.shape}。")
+    module = _get_lag_module(model)
+    score_parts: list[np.ndarray] = []
+    diagnostic_parts: dict[str, list[np.ndarray]] = {}
+    with torch.no_grad():
+        for start in range(0, len(x), batch_size):
+            batch = x[start : start + batch_size]
+            real = torch.from_numpy(batch[:, 0].astype(np.float32, copy=False)).to(device)
+            imag = torch.from_numpy(batch[:, 1].astype(np.float32, copy=False)).to(device)
+            logits = model(torch.complex(real, imag))
+            if logits.ndim != 3 or logits.shape[1] != 2:
+                raise ValueError(f"模型输出应为 [B, 2, N]，实际为 {tuple(logits.shape)}。")
+            score_parts.append((logits[:, 1, :] - logits[:, 0, :]).cpu().numpy().astype(np.float64))
+            if module is not None:
+                if not module.last_cell_diagnostics:
+                    raise RuntimeError("lag-aware TFE 未产生逐 cell 诊断量。")
+                for name, values in module.last_cell_diagnostics.items():
+                    diagnostic_parts.setdefault(name, []).append(
+                        values.cpu().numpy().astype(np.float64, copy=False)
+                    )
+    if not score_parts:
+        raise ValueError("SDRDSP 输入为空，无法推理 lag 诊断。")
+    result: dict[str, Any] = {"scores": np.concatenate(score_parts, axis=0)}
+    if module is not None:
+        result["cell_diagnostics"] = {
+            name: np.concatenate(parts, axis=0) for name, parts in diagnostic_parts.items()
+        }
+    return result
+
+
+def evaluate_margin_records(records: list[dict[str, Any]], threshold: float) -> dict[str, Any]:
+    """用 target-minus-clutter margin 评估，正分数越大越倾向 target。"""
+    total = empty_counts()
+    per_scr: list[dict[str, Any]] = []
+    for item in records:
+        labels = item["labels"]
+        det = (item["scores"] >= threshold).astype(np.uint8)
+        counts = count_detection(det, labels)
+        add_counts(total, counts)
+        per_scr.append({"scr_db": item["scr_db"], **pd_pf(counts), **counts})
+    return {**pd_pf(total), **total, "per_scr": sorted(per_scr, key=lambda value: int(value["scr_db"]))}
+
+
+def build_full_margin_roc(scores: np.ndarray, labels: np.ndarray) -> dict[str, np.ndarray]:
+    """生成完整测试 ROC 数组；重复 score 只保留一次阈值并计入全部并列样本。"""
+    flat_scores = np.asarray(scores, dtype=np.float64).reshape(-1)
+    flat_labels = np.asarray(labels, dtype=np.int64).reshape(-1)
+    if flat_scores.shape != flat_labels.shape or flat_scores.size == 0:
+        raise ValueError("ROC score/label 数组必须非空且 shape 相同。")
+    if not np.all(np.isfinite(flat_scores)) or not np.all(np.isin(flat_labels, [0, 1])):
+        raise ValueError("ROC score 必须有限，label 必须为 0/1。")
+    num_target = int(np.count_nonzero(flat_labels == 1))
+    num_clutter = int(np.count_nonzero(flat_labels == 0))
+    if num_target == 0 or num_clutter == 0:
+        raise ValueError("ROC 需要同时包含 target 和 clutter。")
+    order = np.argsort(-flat_scores, kind="mergesort")
+    ordered_scores = flat_scores[order]
+    ordered_labels = flat_labels[order]
+    ends = np.flatnonzero(np.r_[np.diff(ordered_scores) != 0.0, True])
+    tp = np.cumsum(ordered_labels == 1)[ends]
+    fp = np.cumsum(ordered_labels == 0)[ends]
+    thresholds = ordered_scores[ends]
+    pd_values = tp.astype(np.float64) / num_target
+    pf_values = fp.astype(np.float64) / num_clutter
+    return {
+        "threshold": np.concatenate([np.asarray([np.inf]), thresholds]),
+        "PD": np.concatenate([np.asarray([0.0]), pd_values]),
+        "PF": np.concatenate([np.asarray([0.0]), pf_values]),
+        "TP": np.concatenate([np.asarray([0], dtype=np.int64), tp.astype(np.int64)]),
+        "FP": np.concatenate([np.asarray([0], dtype=np.int64), fp.astype(np.int64)]),
+        "num_target": np.asarray([num_target], dtype=np.int64),
+        "num_clutter": np.asarray([num_clutter], dtype=np.int64),
+    }
+
+
+def _empty_lag_group_values() -> dict[str, dict[str, list[np.ndarray]]]:
+    metrics = (
+        "mixed_delta_ratio",
+        "enhanced_input_rms_ratio",
+        "input_high_frequency_ratio",
+        "mixed_high_frequency_ratio",
+    )
+    return {group: {metric: [] for metric in metrics} for group in ("target", "clutter")}
+
+
+def summarize_lag_groups(
+    labels: np.ndarray,
+    cell_diagnostics: dict[str, np.ndarray],
+) -> dict[str, dict[str, Any]]:
+    expected = set(_empty_lag_group_values()["target"])
+    if set(cell_diagnostics) != expected:
+        raise ValueError(
+            f"lag 逐 cell 诊断字段不完整: actual={sorted(cell_diagnostics)}, expected={sorted(expected)}。"
+        )
+    result: dict[str, dict[str, Any]] = {}
+    masks = {"target": labels == 1, "clutter": labels == 0}
+    for group, mask in masks.items():
+        result[group] = {}
+        for metric, values in cell_diagnostics.items():
+            array = np.asarray(values, dtype=np.float64)
+            if array.shape != labels.shape:
+                raise ValueError(f"{metric} shape 应为 {labels.shape}，实际为 {array.shape}。")
+            result[group][metric] = summarize_numeric_values(array[mask])
+    return result
+
+
+def append_lag_group_values(
+    accumulator: dict[str, dict[str, list[np.ndarray]]],
+    labels: np.ndarray,
+    cell_diagnostics: dict[str, np.ndarray],
+) -> None:
+    for group, mask in {"target": labels == 1, "clutter": labels == 0}.items():
+        for metric, values in cell_diagnostics.items():
+            selected = np.asarray(values, dtype=np.float64)[mask]
+            if selected.size:
+                accumulator[group][metric].append(selected)
+
+
+def finalize_lag_group_values(
+    accumulator: dict[str, dict[str, list[np.ndarray]]],
+) -> dict[str, dict[str, Any]]:
+    return {
+        group: {
+            metric: summarize_numeric_values(np.concatenate(values) if values else np.array([]))
+            for metric, values in metrics.items()
+        }
+        for group, metrics in accumulator.items()
+    }
+
+
 def _empty_attention_group_values() -> dict[str, dict[str, list[np.ndarray]]]:
     groups = ("target", "neighborhood_clutter", "remote_clutter", "all_clutter")
     metrics = (
@@ -2004,6 +2333,91 @@ def finalize_attention_group_values(
 def default_temporal_attention_audit_output_path() -> Path:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     return Path("logs") / "training" / f"{stamp}_sdrdsp_temporal_attention_audit" / "diagnostics.json"
+
+
+def default_lag_matched_pf_output_path() -> Path:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return Path("logs") / "training" / f"{stamp}_sdrdsp_lag_matched_pf_diagnostic" / "diagnostics.json"
+
+
+def build_lag_matched_pf_report(results: dict[str, Any]) -> str:
+    lines = [
+        "# SDRDSP lag matched-PF test diagnostic",
+        "",
+        f"- checkpoint：`{results['checkpoint']}`",
+        f"- score：`{results['roc_data_definition']['score']}`，positive decision：`{results['roc_data_definition']['positive_decision']}`",
+        "- formal threshold source：`train_clutter`；matched-PF threshold source：`test_diagnostic_clutter`",
+        f"- full ROC arrays：`{results['roc_data_path']}`",
+        "",
+        "## Formal train-clutter threshold",
+        "",
+        "| Target Pfa | Test PD | Test PF | Threshold |",
+        "|---:|---:|---:|---:|",
+    ]
+    for pfa, payload in results["formal_train_clutter_results"].items():
+        test = payload["test"]
+        lines.append(
+            f"| {pfa} | {test['PD']:.6f} | {test['PF']:.9f} | {payload['threshold']:.9f} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Test-diagnostic matched PF",
+            "",
+            "| Requested PF | Test PD | Actual PF | Threshold |",
+            "|---:|---:|---:|---:|",
+        ]
+    )
+    for target_pf, payload in results["matched_pf_results"].items():
+        test = payload["test"]
+        lines.append(
+            f"| {target_pf} | {test['PD']:.6f} | {test['PF']:.9f} | {payload['threshold']:.9f} |"
+        )
+    diagnostics = results["lag_diagnostics"]
+    lines.extend(["", "## Lag diagnostics", ""])
+    if not diagnostics["available"]:
+        lines.append(f"- unavailable：{diagnostics['unavailable_reason']}")
+    else:
+        lines.extend(
+            [
+                "- unit：range cell；分组依据为测试标签 target/clutter，不使用测试分数选组。",
+                "- per-SCR and all-test summaries are stored in diagnostics.json with count/mean/std/p05/p50/p95.",
+                "",
+                "| Group | Metric | Count | Mean | Std |",
+                "|---|---|---:|---:|---:|",
+            ]
+        )
+        for group, metrics in diagnostics["all_test"].items():
+            for metric, summary in metrics.items():
+                lines.append(
+                    f"| {group} | {metric} | {summary['count']} | {summary['mean']:.9f} | {summary['std']:.9f} |"
+                )
+    lines.extend(
+        [
+            "",
+            "本文件是 test_diagnostic；不能替代训练杂波阈值下的正式性能结果。",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def print_lag_matched_pf_summary(results: dict[str, Any]) -> None:
+    print("Lag matched-PF diagnostic summary", flush=True)
+    for target_pf, payload in results["matched_pf_results"].items():
+        test = payload["test"]
+        print(
+            f"test_diagnostic PF={target_pf} | actual_PF={test['PF']:.9f} "
+            f"| PD={test['PD']:.6f} | threshold={payload['threshold']:.9f}",
+            flush=True,
+        )
+    diagnostics = results["lag_diagnostics"]
+    print(
+        f"lag_diagnostics_available={diagnostics['available']} "
+        f"| test_scr_files={results['test_counts']['num_scr_files']} "
+        f"| test_cells={results['test_counts']['num_cells']}",
+        flush=True,
+    )
 
 
 def build_temporal_attention_report(results: dict[str, Any]) -> str:

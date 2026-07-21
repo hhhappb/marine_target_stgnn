@@ -5,6 +5,7 @@ import torch.nn as nn
 from .corrected_diff_tfe import CorrectedDiffOnlyTFE
 from .diff_bicam_tfe import DiffBiCAMTFE
 from .fixed_uniform_tfe import FixedUniformTemporalMixerTFE
+from .lag_aware_anti_alias_tfe import LagAwareAntiAliasTFE
 from .pulse_attention_tfe import PulseAttentionOnlyTFE
 from .stgnn_tfe import STGNNTemporalGate
 
@@ -49,6 +50,17 @@ def build_temporal_module(config: dict[str, object], in_channels: int, out_chann
             residual_scale=float(config.get("residual_scale", 0.1)),
             use_mixer=bool(config.get("use_mixer", True)),
         )
+    if temporal_type == "lag_aware_anti_alias_tfe":
+        return LagAwareAntiAliasTFE(
+            in_channels,
+            out_channels,
+            kernel_size=int(config.get("kernel_size", 3)),
+            filter_groups=int(config.get("filter_groups", 1)),
+            gamma_init=float(config.get("gamma_init", 0.05)),
+            gamma_max=float(config.get("gamma_max", 1.0)),
+            use_filter=bool(config.get("use_filter", True)),
+            padding_mode=str(config.get("padding_mode", "replicate")),
+        )
     raise ValueError(f"Unknown temporal module type: {temporal_type}")
 
 
@@ -57,6 +69,7 @@ __all__ = [
     "CorrectedDiffOnlyTFE",
     "DiffBiCAMTFE",
     "FixedUniformTemporalMixerTFE",
+    "LagAwareAntiAliasTFE",
     "PulseAttentionOnlyTFE",
     "STGNNTemporalGate",
 ]
