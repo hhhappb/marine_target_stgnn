@@ -1,17 +1,17 @@
 paths:
-  data_dir: data/sdrdsp_crop256_phase_rcs_v1
-  save_dir: logs/training/repro_original_stgnn_sdrdsp_phase_rcs_v1
+  data_dir: data/sdrdsp_full_t1_ideal_v1
+  save_dir: logs/training/repro_original_stgnn_sdrdsp_full_t1_ideal_v1
 
 dataset:
   type: scr_npz
-  data_dir: data/sdrdsp_crop256_phase_rcs_v1
-  protocol: sdrdsp_fig9_local_crop_phase_rcs_v1
+  data_dir: data/sdrdsp_full_t1_ideal_v1
+  protocol: sdrdsp_fig9_full_t1_ideal_v1
   normalization: none
 
 model:
   name: original_stgnn
   pulses: 4
-  range_cells: 256
+  range_cells: 2224
   gat_dropout: 0.0
 
 loss:

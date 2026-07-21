@@ -24,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seeds", nargs="+", type=int, default=None)
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=None)
     parser.add_argument("--num-workers", type=int, default=None)
     parser.add_argument("--max-train-windows", type=int, default=None)
     parser.add_argument("--max-test-windows-per-file", type=int, default=None)
@@ -108,6 +109,9 @@ def apply_suite(args: argparse.Namespace) -> None:
     overrides = suite.get("overrides", {})
     args.epochs = overrides.get("epochs", args.epochs)
     args.batch_size = overrides.get("batch_size", args.batch_size)
+    args.gradient_accumulation_steps = overrides.get(
+        "gradient_accumulation_steps", args.gradient_accumulation_steps
+    )
     args.num_workers = overrides.get("num_workers", args.num_workers)
     args.max_train_windows = overrides.get("max_train_windows", args.max_train_windows)
     args.max_test_windows_per_file = overrides.get("max_test_windows_per_file", args.max_test_windows_per_file)
@@ -212,6 +216,8 @@ def prepare_run_config(args: argparse.Namespace, base_cfg: dict[str, Any], seed:
         cfg["train"]["epochs"] = args.epochs
     if args.batch_size is not None:
         cfg["train"]["batch_size"] = args.batch_size
+    if args.gradient_accumulation_steps is not None:
+        cfg["train"]["gradient_accumulation_steps"] = args.gradient_accumulation_steps
     if args.num_workers is not None:
         cfg["train"]["num_workers"] = args.num_workers
     return cfg
@@ -242,6 +248,9 @@ def config_metadata(config: dict[str, Any]) -> dict[str, Any]:
         "threshold_source": str(eval_cfg.get("threshold_source", "test_diagnostic_current_eval")),
         "epochs": int(train_cfg.get("epochs", 0)),
         "batch_size": int(train_cfg.get("batch_size", 0)),
+        "gradient_accumulation_steps": int(train_cfg.get("gradient_accumulation_steps", 1)),
+        "nominal_effective_batch_size": int(train_cfg.get("batch_size", 0))
+        * int(train_cfg.get("gradient_accumulation_steps", 1)),
         "learning_rate": float(train_cfg.get("learning_rate", 0.0)),
     }
 
@@ -252,6 +261,7 @@ def comparable_mismatches(candidate: dict[str, Any], baseline: dict[str, Any]) -
         "train_augmentation",
         "epochs",
         "batch_size",
+        "gradient_accumulation_steps",
         "learning_rate",
         "threshold_source",
         "eval_protocol",
@@ -321,7 +331,6 @@ def read_metrics(results_path: Path, target_pfa: float | None) -> dict[str, Any]
     key = select_pfa_key(pfa_map, target_pfa)
     result = pfa_map[key]
     tp, fn, fp, tn = int(result["TP"]), int(result["FN"]), int(result["FP"]), int(result["TN"])
-    total = tp + fn + fp + tn
     per_file = result.get("per_file", [])
     worst = min(per_file, key=lambda item: float(item.get("PD", 0.0))) if per_file else {}
     return {
@@ -331,7 +340,6 @@ def read_metrics(results_path: Path, target_pfa: float | None) -> dict[str, Any]
         "threshold": float(result["threshold"]),
         "PD": float(result["PD"]),
         "PF": float(result["PF"]),
-        "accuracy": (tp + tn) / total if total else 0.0,
         "TP": tp,
         "FN": fn,
         "FP": fp,
@@ -416,12 +424,11 @@ def write_summary(path: Path, rows: list[dict[str, Any]], target_pfa: float | No
             f"| {pair} | {row['run_name']} | {row.get('model_name', '')} | {float(row['PD']):.6f} | "
             f"{float(row['PF']):.6f} | {float(delta_pd):+.6f} | {float(delta_pf):+.6f} | {mismatch or 'ok'} |"
         )
-    lines.extend(["", "## Diagnostic Ranking", "", "| Rank | Run | PD | PF | Accuracy | Worst file/pol |", "|---:|---|---:|---:|---:|---|"])
+    lines.extend(["", "## Diagnostic Ranking", "", "| Rank | Run | PD | PF | Worst file/pol |", "|---:|---|---:|---:|---|"])
     for idx, row in enumerate(ranked, start=1):
         worst = f"{row.get('worst_source', '')}/{row.get('worst_polarization', '')}"
         lines.append(
-            f"| {idx} | {row['run_name']} | {float(row['PD']):.6f} | {float(row['PF']):.6f} | "
-            f"{float(row['accuracy']):.6f} | {worst} |"
+            f"| {idx} | {row['run_name']} | {float(row['PD']):.6f} | {float(row['PF']):.6f} | {worst} |"
         )
     failed = [row for row in rows if row.get("status") != "completed"]
     if failed:

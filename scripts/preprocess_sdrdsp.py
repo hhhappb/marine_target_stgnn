@@ -15,8 +15,21 @@ TEST_MAT = "20210106155432_01_staring.mat"
 MAT_KEY = "amplitude_complex_T1"
 PROTOCOL_ID = "sdrdsp_fig9_local_crop_v2"
 REALISTIC_PROTOCOL_ID = "sdrdsp_fig9_local_crop_phase_rcs_v1"
+PHASE_ONLY_PROTOCOL_ID = "sdrdsp_fig9_crop256_phase_only_v1"
+RCS_ONLY_PROTOCOL_ID = "sdrdsp_fig9_crop256_rcs_only_v1"
+FULL_T1_PROTOCOL_ID = "sdrdsp_fig9_full_t1_ideal_v1"
 IDEAL_TARGET_MODEL = "ideal_continuous_phase"
 REALISTIC_TARGET_MODEL = "phase_noise_swerling1_window"
+PHASE_ONLY_TARGET_MODEL = "phase_noise_constant_rcs"
+RCS_ONLY_TARGET_MODEL = "ideal_phase_swerling1_window"
+N128_PROTOCOL_ID = "sdrdsp_fig9_local_crop_n128_v1"
+N512_PROTOCOL_ID = "sdrdsp_fig9_local_crop_n512_v1"
+TARGET_PROTOCOLS = {
+    IDEAL_TARGET_MODEL: PROTOCOL_ID,
+    REALISTIC_TARGET_MODEL: REALISTIC_PROTOCOL_ID,
+    PHASE_ONLY_TARGET_MODEL: PHASE_ONLY_PROTOCOL_ID,
+    RCS_ONLY_TARGET_MODEL: RCS_ONLY_PROTOCOL_ID,
+}
 TRAIN_SCR_VALUES = list(range(-12, 15, 2))
 TEST_SCR_VALUES = list(range(-24, 15, 2))
 
@@ -33,6 +46,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reference-cells", type=int, default=20)
     parser.add_argument("--paper-target-cell", type=int, default=2083, help="论文中的一基距离单元编号。")
     parser.add_argument("--crop-start", type=int, default=None)
+    parser.add_argument(
+        "--protocol-id",
+        type=str,
+        default=None,
+        choices=[
+            PROTOCOL_ID,
+            REALISTIC_PROTOCOL_ID,
+            PHASE_ONLY_PROTOCOL_ID,
+            RCS_ONLY_PROTOCOL_ID,
+            FULL_T1_PROTOCOL_ID,
+            N128_PROTOCOL_ID,
+            N512_PROTOCOL_ID,
+        ],
+    )
+    parser.add_argument(
+        "--reference-manifest",
+        type=Path,
+        default=None,
+        help="复用已有 SDRDSP manifest 的目标位置、速度和参考单元；用于 full-T1 切片一致性。",
+    )
     parser.add_argument("--train-targets-per-scr", type=int, default=5)
     parser.add_argument("--min-target-gap", type=int, default=21, help="训练目标之间允许的最小索引间隔。")
     parser.add_argument("--train-speed-min", type=float, default=0.1)
@@ -43,7 +76,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--target-model",
-        choices=[IDEAL_TARGET_MODEL, REALISTIC_TARGET_MODEL],
+        choices=list(TARGET_PROTOCOLS),
         default=IDEAL_TARGET_MODEL,
     )
     parser.add_argument("--phase-noise-std-deg", type=float, default=10.0)
@@ -77,7 +110,10 @@ def main() -> None:
     train_clutter = load_clutter(train_mat, args.mat_key, crop_start, crop_end)
     test_clutter = load_clutter(test_mat, args.mat_key, crop_start, crop_end)
     rng = np.random.default_rng(args.seed)
-    protocol_id = PROTOCOL_ID if args.target_model == IDEAL_TARGET_MODEL else REALISTIC_PROTOCOL_ID
+    protocol_id = args.protocol_id or TARGET_PROTOCOLS[args.target_model]
+    if protocol_id == FULL_T1_PROTOCOL_ID and args.target_model != IDEAL_TARGET_MODEL:
+        raise ValueError("full-T1 协议当前只支持 ideal_continuous_phase。")
+    reference_schedule = load_reference_schedule(args.reference_manifest) if args.reference_manifest else None
 
     train_x_parts: list[np.ndarray] = []
     train_y_parts: list[np.ndarray] = []
@@ -87,14 +123,18 @@ def main() -> None:
     train_injection_audits: dict[str, dict[str, Any]] = {}
 
     for scr in TRAIN_SCR_VALUES:
-        target_local = choose_train_targets(
-            rng,
-            args.range_cells,
-            args.train_targets_per_scr,
-            args.reference_cells,
-            args.min_target_gap,
-        )
-        target_speeds = rng.uniform(args.train_speed_min, args.train_speed_max, size=len(target_local))
+        if reference_schedule is None:
+            target_local = choose_train_targets(
+                rng,
+                args.range_cells,
+                args.train_targets_per_scr,
+                args.reference_cells,
+                args.min_target_gap,
+            )
+            target_speeds = rng.uniform(args.train_speed_min, args.train_speed_max, size=len(target_local))
+            reference_bins = None
+        else:
+            target_local, target_speeds, reference_bins = reference_schedule["train"][str(scr)]
         train_targets[str(scr)] = [int(crop_start + pos + 1) for pos in target_local]
         train_speeds[str(scr)] = [float(speed) for speed in target_speeds]
         x_scr, y_scr, injection_audit = build_scr_samples(
@@ -110,6 +150,7 @@ def main() -> None:
             target_model=args.target_model,
             target_rng=np.random.default_rng(args.seed + 100_000 + scr),
             phase_noise_std_deg=args.phase_noise_std_deg,
+            reference_bins_by_pos=reference_bins,
         )
         train_x_parts.append(x_scr)
         train_y_parts.append(y_scr)
@@ -123,10 +164,16 @@ def main() -> None:
     test_sets: dict[int, tuple[np.ndarray, np.ndarray]] = {}
     test_injection_audits: dict[str, dict[str, Any]] = {}
     for scr in TEST_SCR_VALUES:
+        if reference_schedule is None:
+            test_positions = [local_target]
+            test_speeds = [args.test_speed]
+            test_reference_bins = None
+        else:
+            test_positions, test_speeds, test_reference_bins = reference_schedule["test"][str(scr)]
         x_scr, y_scr, injection_audit = build_scr_samples(
             clutter=test_clutter,
-            target_positions=[local_target],
-            target_speeds=[args.test_speed],
+            target_positions=test_positions,
+            target_speeds=test_speeds,
             scr_db=scr,
             pulses=args.pulses,
             reference_cells=args.reference_cells,
@@ -136,6 +183,7 @@ def main() -> None:
             target_model=args.target_model,
             target_rng=np.random.default_rng(args.seed + 200_000 + scr),
             phase_noise_std_deg=args.phase_noise_std_deg,
+            reference_bins_by_pos=test_reference_bins,
         )
         test_sets[scr] = (x_scr, y_scr)
         test_injection_audits[str(scr)] = injection_audit
@@ -251,6 +299,7 @@ def build_scr_samples(
     target_model: str = IDEAL_TARGET_MODEL,
     target_rng: np.random.Generator | None = None,
     phase_noise_std_deg: float = 10.0,
+    reference_bins_by_pos: dict[int, list[int]] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     """先向完整距离像序列注入连续目标，再按脉冲维非重叠分段。"""
     if clutter.ndim != 2:
@@ -265,10 +314,10 @@ def build_scr_samples(
         raise ValueError(f"pulses 必须为正整数，实际为 {pulses}。")
     if prt <= 0 or wavelength <= 0:
         raise ValueError(f"PRT 和波长必须为正数: prt={prt}, wavelength={wavelength}。")
-    if target_model not in {IDEAL_TARGET_MODEL, REALISTIC_TARGET_MODEL}:
+    if target_model not in TARGET_PROTOCOLS:
         raise ValueError(f"未知 target_model: {target_model!r}。")
-    if target_model == REALISTIC_TARGET_MODEL and target_rng is None:
-        raise ValueError("真实化目标模型需要显式 target_rng，避免不可复现。")
+    if target_model != IDEAL_TARGET_MODEL and target_rng is None:
+        raise ValueError("随机因素目标模型需要显式 target_rng，避免不可复现。")
     if not np.isfinite(phase_noise_std_deg) or phase_noise_std_deg < 0:
         raise ValueError(f"phase_noise_std_deg 必须为非负有限数，实际为 {phase_noise_std_deg}。")
 
@@ -285,7 +334,11 @@ def build_scr_samples(
         if not 0 <= pos < clutter.shape[1]:
             raise ValueError(f"目标位置越界: pos={pos}, range_cells={clutter.shape[1]}。")
     ref_by_pos = {
-        pos: local_reference_bins(pos, clutter.shape[1], excluded, reference_cells)
+        pos: (
+            list(reference_bins_by_pos[pos])
+            if reference_bins_by_pos is not None and pos in reference_bins_by_pos
+            else local_reference_bins(pos, clutter.shape[1], excluded, reference_cells)
+        )
         for pos in target_positions
     }
     for pos, refs in ref_by_pos.items():
@@ -308,7 +361,7 @@ def build_scr_samples(
             rcs_mean_power_gain = 1.0
         else:
             assert target_rng is not None
-            target_signal, rcs_mean_power_gain = build_realistic_target_signal(
+            target_signal, rcs_mean_power_gain, component_audit = build_realistic_target_signal(
                 num_pulses=clutter.shape[0],
                 starts=starts,
                 pulses=pulses,
@@ -318,6 +371,8 @@ def build_scr_samples(
                 wavelength=wavelength,
                 phase_noise_std_deg=phase_noise_std_deg,
                 rng=target_rng,
+                use_phase_factor=target_model in {PHASE_ONLY_TARGET_MODEL, REALISTIC_TARGET_MODEL},
+                use_rcs_factor=target_model in {RCS_ONLY_TARGET_MODEL, REALISTIC_TARGET_MODEL},
             )
         injected[:, pos] += target_signal.astype(injected.dtype, copy=False)
         achieved_scr = 10.0 * np.log10((target_amplitude**2) / reference_power_sum)
@@ -331,6 +386,7 @@ def build_scr_samples(
                 "achieved_injected_scr_db": float(achieved_scr),
                 "abs_scr_error_db": float(abs(achieved_scr - scr_db)),
                 "rcs_mean_power_gain": float(rcs_mean_power_gain),
+                **({"component_draws": component_audit} if target_model != IDEAL_TARGET_MODEL else {}),
             }
         )
 
@@ -351,10 +407,14 @@ def build_scr_samples(
         "target_model": target_model,
         "phase_progression": (
             "continuous_global_pulse_index"
-            if target_model == IDEAL_TARGET_MODEL
+            if target_model in {IDEAL_TARGET_MODEL, RCS_ONLY_TARGET_MODEL}
             else "per_window_random_initial_phase_plus_doppler_plus_random_walk"
         ),
-        "phase_noise_std_deg": float(phase_noise_std_deg) if target_model == REALISTIC_TARGET_MODEL else 0.0,
+        "phase_noise_std_deg": (
+            float(phase_noise_std_deg)
+            if target_model in {PHASE_ONLY_TARGET_MODEL, REALISTIC_TARGET_MODEL}
+            else 0.0
+        ),
     }
     return np.stack(x_parts, axis=0), y, audit
 
@@ -369,7 +429,9 @@ def build_realistic_target_signal(
     wavelength: float,
     phase_noise_std_deg: float,
     rng: np.random.Generator,
-) -> tuple[np.ndarray, float]:
+    use_phase_factor: bool = True,
+    use_rcs_factor: bool = True,
+) -> tuple[np.ndarray, float, dict[str, Any]]:
     """生成窗级 Swerling-I 起伏与窗内相位随机游走目标；平均注入功率保持不变。"""
     gains = rng.exponential(scale=1.0, size=len(starts)).astype(np.float64)
     mean_gain = float(gains.mean())
@@ -379,13 +441,29 @@ def build_realistic_target_signal(
     omega = 4.0 * np.pi * speed * prt / wavelength
     noise_std = np.deg2rad(phase_noise_std_deg)
     signal = np.zeros(num_pulses, dtype=np.complex128)
+    random_phases = np.zeros((len(starts), pulses), dtype=np.float64)
     for window_idx, start in enumerate(starts):
         initial_phase = rng.uniform(-np.pi, np.pi)
         increments = rng.normal(0.0, noise_std, size=pulses)
         random_walk = np.cumsum(increments)
-        phase = initial_phase + omega * np.arange(pulses, dtype=np.float64) + random_walk
-        signal[start : start + pulses] = target_amplitude * np.sqrt(gains[window_idx]) * np.exp(1j * phase)
-    return signal, float(gains.mean())
+        random_phase = initial_phase + omega * np.arange(pulses, dtype=np.float64) + random_walk
+        random_phases[window_idx] = random_phase
+        phase = (
+            random_phase
+            if use_phase_factor
+            else omega * (start + np.arange(pulses, dtype=np.float64))
+        )
+        power_gain = gains[window_idx] if use_rcs_factor else 1.0
+        signal[start : start + pulses] = target_amplitude * np.sqrt(power_gain) * np.exp(1j * phase)
+    component_audit = {
+        "draw_stream": "legacy_combined_v1_draw_all_components_before_factor_toggle",
+        "rcs_gain_sha256": hashlib.sha256(gains.tobytes()).hexdigest(),
+        "phase_bundle_sha256": hashlib.sha256(random_phases.tobytes()).hexdigest(),
+        "phase_factor_enabled": use_phase_factor,
+        "rcs_factor_enabled": use_rcs_factor,
+    }
+    applied_mean_gain = float(gains.mean()) if use_rcs_factor else 1.0
+    return signal, applied_mean_gain, component_audit
 
 
 def local_reference_bins(pos: int, range_cells: int, excluded: set[int], count: int) -> list[int]:
@@ -442,6 +520,10 @@ def build_manifest(
         "dataset": (
             "SDRDSP Fig. 9 local-crop reproduction"
             if protocol_id == PROTOCOL_ID
+            else "SDRDSP Fig. 9 full-T1 feasibility protocol"
+            if protocol_id == FULL_T1_PROTOCOL_ID
+            else "SDRDSP Fig. 9 local-crop N-scale ablation"
+            if protocol_id in {N128_PROTOCOL_ID, N512_PROTOCOL_ID}
             else "SDRDSP Fig. 9 local-crop target-model sensitivity"
         ),
         "source_files": {
@@ -453,7 +535,7 @@ def build_manifest(
         },
         "protocol": {
             "id": protocol_id,
-            "scope": "local_crop",
+            "scope": "full_t1" if protocol_id == FULL_T1_PROTOCOL_ID else "local_crop",
             "paper_experiment": "Fig. 9",
             "train_background_name": TRAIN_MAT,
             "test_background_name": TEST_MAT,
@@ -478,19 +560,36 @@ def build_manifest(
             "normalization": "none",
             "target_model": args.target_model,
             "phase_noise_model": (
-                "none" if args.target_model == IDEAL_TARGET_MODEL else "within_window_random_walk"
+                "within_window_random_walk"
+                if args.target_model in {PHASE_ONLY_TARGET_MODEL, REALISTIC_TARGET_MODEL}
+                else "none"
             ),
             "phase_noise_std_deg": (
-                0.0 if args.target_model == IDEAL_TARGET_MODEL else args.phase_noise_std_deg
+                args.phase_noise_std_deg
+                if args.target_model in {PHASE_ONLY_TARGET_MODEL, REALISTIC_TARGET_MODEL}
+                else 0.0
             ),
             "random_initial_phase": (
-                "none" if args.target_model == IDEAL_TARGET_MODEL else "per_4_pulse_window"
+                "per_4_pulse_window"
+                if args.target_model in {PHASE_ONLY_TARGET_MODEL, REALISTIC_TARGET_MODEL}
+                else "none"
             ),
-            "rcs_model": "none" if args.target_model == IDEAL_TARGET_MODEL else "swerling1_window",
+            "rcs_model": (
+                "swerling1_window"
+                if args.target_model in {RCS_ONLY_TARGET_MODEL, REALISTIC_TARGET_MODEL}
+                else "constant"
+            ),
             "rcs_power_distribution": (
-                "constant_1" if args.target_model == IDEAL_TARGET_MODEL else "exponential_mean_1"
+                "exponential_mean_1"
+                if args.target_model in {RCS_ONLY_TARGET_MODEL, REALISTIC_TARGET_MODEL}
+                else "constant_1"
             ),
             "rcs_mean_power_normalized": True,
+            "component_draw_stream": (
+                "none"
+                if args.target_model == IDEAL_TARGET_MODEL
+                else "legacy_combined_v1_draw_all_components_before_factor_toggle"
+            ),
         },
         "crop": {
             "paper_target_cell_one_based": args.paper_target_cell,
@@ -525,6 +624,44 @@ def build_manifest(
         },
         "seed": args.seed,
     }
+
+
+def load_reference_schedule(path: Path) -> dict[str, dict[str, tuple[list[int], list[float], dict[int, list[int]]]]]:
+    """把 local-crop manifest 中的目标安排转换为 full-T1 的全局索引。"""
+    if not path.exists():
+        raise FileNotFoundError(f"reference manifest 不存在: {path}")
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    if manifest.get("protocol", {}).get("id") != PROTOCOL_ID:
+        raise ValueError("reference-manifest 必须来自 ideal local-crop 协议。")
+    reference_crop_start = int(manifest["crop"]["crop_start_zero_based"])
+    train_positions = manifest["protocol"]["train_target_cells_one_based_by_scr"]
+    train_speeds = manifest["protocol"]["train_target_speeds_mps_by_scr"]
+    train_audits = manifest["audit"]["train_injection_by_scr"]
+    test_audits = manifest["audit"]["test_injection_by_scr"]
+    schedule: dict[str, dict[str, tuple[list[int], list[float], dict[int, list[int]]]]] = {"train": {}, "test": {}}
+    for scr, cells in train_positions.items():
+        # crop manifest 的 train_target_cells 已记录为全局一基索引，只需转为零基。
+        positions = [int(cell) - 1 for cell in cells]
+        records = train_audits[str(scr)]["target_records"]
+        refs = {
+            int(record["target_position_local_zero_based"]) + reference_crop_start: [
+                int(ref) + reference_crop_start for ref in record["reference_cells_local_zero_based"]
+            ]
+            for record in records
+        }
+        schedule["train"][str(scr)] = (positions, [float(v) for v in train_speeds[str(scr)]], refs)
+    for scr, audit in test_audits.items():
+        records = audit["target_records"]
+        positions = [int(record["target_position_local_zero_based"]) + reference_crop_start for record in records]
+        speeds = [float(record["speed_mps"]) for record in records]
+        refs = {
+            int(record["target_position_local_zero_based"]) + reference_crop_start: [
+                int(ref) + reference_crop_start for ref in record["reference_cells_local_zero_based"]
+            ]
+            for record in records
+        }
+        schedule["test"][str(scr)] = (positions, speeds, refs)
+    return schedule
 
 
 def summarize_positive_counts(y: np.ndarray) -> dict[str, float]:

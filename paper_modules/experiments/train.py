@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import subprocess
 import sys
 import time
 from pathlib import Path
+from datetime import datetime
 from typing import Any
 
 import numpy as np
@@ -41,10 +43,14 @@ def train_one_epoch(
     show_progress: bool,
     log_interval: int,
     grad_clip: float | None,
+    gradient_accumulation_steps: int = 1,
 ) -> tuple[float, dict[str, float]]:
+    if gradient_accumulation_steps < 1:
+        raise ValueError(
+            f"gradient_accumulation_steps 必须为正整数，实际为 {gradient_accumulation_steps}。"
+        )
     model.train()
     total_loss = 0.0
-    total_bins = correct = 0
     tp = fp = tn = fn = 0
     progress = tqdm(
         total=len(loader),
@@ -55,6 +61,8 @@ def train_one_epoch(
         file=sys.stdout,
         disable=not show_progress,
     )
+    optimizer.zero_grad(set_to_none=True)
+    optimizer_steps = 0
     try:
         for batch_idx, (real, imag, labels) in enumerate(loader, start=1):
             real = real.to(device, non_blocking=True)
@@ -62,31 +70,33 @@ def train_one_epoch(
             labels = labels.to(device, non_blocking=True)
             echoes = torch.complex(real, imag)
 
-            optimizer.zero_grad(set_to_none=True)
             logits = model(echoes)
             loss = criterion(logits, labels)
-            loss.backward()
-            if grad_clip is not None and grad_clip > 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-            optimizer.step()
+            window_start = ((batch_idx - 1) // gradient_accumulation_steps) * gradient_accumulation_steps + 1
+            window_size = min(gradient_accumulation_steps, len(loader) - window_start + 1)
+            (loss / window_size).backward()
+            should_step = batch_idx % gradient_accumulation_steps == 0 or batch_idx == len(loader)
+            if should_step:
+                if grad_clip is not None and grad_clip > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+                optimizer_steps += 1
 
             loss_value = float(loss.item())
             total_loss += loss_value
             pred = logits.argmax(dim=1)
-            total_bins += labels.numel()
-            correct += int((pred == labels).sum().item())
             tp += int(((pred == 1) & (labels == 1)).sum().item())
             fp += int(((pred == 1) & (labels == 0)).sum().item())
             tn += int(((pred == 0) & (labels == 0)).sum().item())
             fn += int(((pred == 0) & (labels == 1)).sum().item())
 
-            metrics = _metrics(correct, total_bins, tp, fp, tn, fn)
+            metrics = _metrics(tp, fp, tn, fn)
             if show_progress:
                 progress.update(1)
                 progress.set_postfix(
                     loss=f"{loss_value:.4f}",
                     avg=f"{total_loss / batch_idx:.4f}",
-                    acc=f"{metrics['accuracy']:.4f}",
                     PD=f"{metrics['pd']:.4f}",
                     PF=f"{metrics['pf']:.4f}",
                 )
@@ -94,12 +104,104 @@ def train_one_epoch(
                 print(
                     f"Epoch {epoch:03d}/{epochs} batch {batch_idx}/{len(loader)} "
                     f"| loss={loss_value:.6f} | avg={total_loss / batch_idx:.6f} "
-                    f"| acc={metrics['accuracy']:.4f} | PD={metrics['pd']:.4f} | PF={metrics['pf']:.4f}",
+                    f"| PD={metrics['pd']:.4f} | PF={metrics['pf']:.4f}",
                     flush=True,
                 )
     finally:
         progress.close()
-    return total_loss / max(1, len(loader)), _metrics(correct, total_bins, tp, fp, tn, fn)
+    metrics = _metrics(tp, fp, tn, fn)
+    metrics["optimizer_steps"] = float(optimizer_steps)
+    return total_loss / max(1, len(loader)), metrics
+
+
+def probe_batch_sizes(
+    model: nn.Module,
+    dataset: Any,
+    criterion: nn.Module,
+    device: torch.device,
+    candidates: list[int],
+    memory_fraction: float,
+) -> dict[str, Any]:
+    """用真实单批前向和反向探测训练显存，不执行参数更新。"""
+    if device.type != "cuda":
+        raise RuntimeError("batch 自动探测需要 CUDA 设备。")
+    if not candidates or any(value < 1 for value in candidates):
+        raise ValueError(f"batch candidates 必须为正整数，实际为 {candidates}。")
+    if candidates != sorted(set(candidates)):
+        raise ValueError("batch candidates 必须严格递增且不重复。")
+    if not 0.0 < memory_fraction < 1.0:
+        raise ValueError(f"memory_fraction 必须位于 (0, 1)，实际为 {memory_fraction}。")
+
+    total_bytes = int(torch.cuda.get_device_properties(device).total_memory)
+    records: list[dict[str, Any]] = []
+    model.train()
+    for batch_size in candidates:
+        loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+        real = imag = labels = echoes = logits = loss = None
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats(device)
+        started = time.perf_counter()
+        try:
+            real, imag, labels = next(iter(loader))
+            real = real.to(device)
+            imag = imag.to(device)
+            labels = labels.to(device)
+            echoes = torch.complex(real, imag)
+            # 首次执行只用于 CUDA kernel/allocator 预热，不计入吞吐。
+            model.zero_grad(set_to_none=True)
+            logits = model(echoes)
+            loss = criterion(logits, labels)
+            loss.backward()
+            torch.cuda.synchronize(device)
+            model.zero_grad(set_to_none=True)
+            del logits, loss
+            logits = loss = None
+            torch.cuda.reset_peak_memory_stats(device)
+            started = time.perf_counter()
+            logits = model(echoes)
+            loss = criterion(logits, labels)
+            loss.backward()
+            torch.cuda.synchronize(device)
+            elapsed = time.perf_counter() - started
+            peak_allocated = int(torch.cuda.max_memory_allocated(device))
+            peak_reserved = int(torch.cuda.max_memory_reserved(device))
+            within_limit = peak_reserved <= int(total_bytes * memory_fraction)
+            records.append(
+                {
+                    "batch_size": batch_size,
+                    "status": "pass" if within_limit else "over_memory_limit",
+                    "elapsed_seconds": elapsed,
+                    "windows_per_second": batch_size / elapsed,
+                    "peak_allocated_bytes": peak_allocated,
+                    "peak_reserved_bytes": peak_reserved,
+                    "peak_reserved_gib": peak_reserved / (1024**3),
+                    "memory_fraction": peak_reserved / total_bytes,
+                    "loss": float(loss.item()),
+                }
+            )
+        except torch.OutOfMemoryError:
+            records.append({"batch_size": batch_size, "status": "oom"})
+        finally:
+            model.zero_grad(set_to_none=True)
+            del real, imag, labels, echoes, logits, loss, loader
+            gc.collect()
+            torch.cuda.empty_cache()
+
+    passing = [item for item in records if item["status"] == "pass"]
+    if not passing:
+        raise RuntimeError(f"候选 batch 均未通过显存限制: {records}。")
+    largest_safe = max(int(item["batch_size"]) for item in passing)
+    recommended = max(passing, key=lambda item: float(item["windows_per_second"]))
+    return {
+        "device": torch.cuda.get_device_name(device),
+        "total_memory_bytes": total_bytes,
+        "memory_limit_fraction": memory_fraction,
+        "selected_batch_size": int(recommended["batch_size"]),
+        "selection_rule": "max_windows_per_second_within_memory_limit_after_one_warmup",
+        "largest_safe_batch_size": largest_safe,
+        "records": records,
+    }
 
 
 def evaluate_files(
@@ -221,6 +323,7 @@ def collect_file_scores(
 
 def evaluate_scr_curve(
     model: nn.Module,
+    config: dict[str, Any],
     data_dir: Path,
     batch_size: int,
     device: torch.device,
@@ -230,7 +333,12 @@ def evaluate_scr_curve(
     seed: int = 42,
 ) -> dict[str, object]:
     model.eval()
-    train_dataset = ScrNpzDataset(data_dir, "train", max_windows=max_threshold_windows, seed=seed)
+    threshold_source = str(config.get("eval", {}).get("threshold_source", ""))
+    if threshold_source != "train":
+        raise ValueError(f"pd_scr_curve 必须使用 threshold_source=train，实际为 {threshold_source!r}。")
+    train_dataset = build_dataset(config, "train", max_windows=max_threshold_windows, seed=seed)
+    if not isinstance(train_dataset, ScrNpzDataset):
+        raise TypeError(f"pd_scr_curve 需要 ScrNpzDataset，实际为 {type(train_dataset).__name__}。")
     train_o0, train_labels = collect_dataset_scores(model, train_dataset, batch_size, device)
     threshold_clutter = train_o0[train_labels == 0]
     if threshold_clutter.size == 0:
@@ -243,14 +351,16 @@ def evaluate_scr_curve(
     scr_records: list[dict[str, object]] = []
     for path in scr_files:
         scr = int(path.stem.replace("test_scr_", ""))
-        dataset = ScrNpzDataset(
-            data_dir,
+        dataset = build_dataset(
+            config,
             "test",
             scr=scr,
             max_windows=max_windows_per_scr,
             seed=seed,
             norm=train_dataset.norm,
         )
+        if not isinstance(dataset, ScrNpzDataset):
+            raise TypeError(f"pd_scr_curve 需要 ScrNpzDataset，实际为 {type(dataset).__name__}。")
         o0, labels = collect_dataset_scores(model, dataset, batch_size, device)
         scr_records.append({"scr_db": scr, "o0": o0, "labels": labels})
 
@@ -359,6 +469,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=None)
+    parser.add_argument("--auto-batch-probe", action="store_true")
+    parser.add_argument(
+        "--batch-candidates",
+        type=int,
+        nargs="+",
+        default=[16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512],
+    )
+    parser.add_argument("--batch-memory-fraction", type=float, default=0.90)
+    parser.add_argument("--batch-probe-output", type=Path, default=None)
     parser.add_argument("--max-train-windows", type=int, default=None)
     parser.add_argument("--max-test-windows-per-file", type=int, default=None)
     parser.add_argument("--checkpoint", type=Path, default=None)
@@ -375,6 +495,13 @@ def main() -> None:
         config["train"]["epochs"] = args.epochs
     if args.batch_size is not None:
         config["train"]["batch_size"] = args.batch_size
+    if args.gradient_accumulation_steps is not None:
+        config["train"]["gradient_accumulation_steps"] = args.gradient_accumulation_steps
+    accumulation_steps = int(config.get("train", {}).get("gradient_accumulation_steps", 1))
+    if accumulation_steps < 1:
+        raise ValueError(f"train.gradient_accumulation_steps 必须为正整数，实际为 {accumulation_steps}。")
+    if args.auto_batch_probe and args.eval_only:
+        raise ValueError("--auto-batch-probe 与 --eval-only 不能同时使用。")
 
     seed = int(get_config_value(config, "train.seed"))
     seed_everything(seed)
@@ -399,6 +526,7 @@ def main() -> None:
     elif dataset_type == "scr_npz":
         if not (data_dir / "train.npz").exists():
             raise SystemExit(f"No SCR train file found under {data_dir}")
+        train_files = [data_dir / "train.npz"]
         test_files = list_test_scr_files(data_dir)
         if not test_files:
             raise SystemExit(f"No SCR test files found under {data_dir}")
@@ -406,6 +534,36 @@ def main() -> None:
         raise SystemExit(f"Unknown dataset type: {dataset_type}")
 
     model = build_model(config).to(device)
+    if args.auto_batch_probe:
+        train_dataset = build_dataset(config, "train", max_windows=args.max_train_windows, seed=seed)
+        use_class_weights = bool(config.get("loss", {}).get("use_class_weights", True))
+        class_weights = train_dataset.class_weights().to(device) if use_class_weights else None
+        criterion = build_loss(config, class_weights)
+        probe = probe_batch_sizes(
+            model,
+            train_dataset,
+            criterion,
+            device,
+            args.batch_candidates,
+            args.batch_memory_fraction,
+        )
+        probe.update(
+            {
+                "config": str(args.config),
+                "data_dir": str(data_dir),
+                "dataset_protocol": dataset_cfg.get("protocol"),
+                "model": config.get("model", {}),
+            }
+        )
+        output = args.batch_probe_output
+        if output is None:
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            output = Path("logs") / "training" / f"{stamp}_batch_probe" / "batch_probe.json"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(probe, indent=2), encoding="utf-8")
+        print(json.dumps(probe, indent=2), flush=True)
+        print(f"Saved batch probe: {output}", flush=True)
+        return
     save_dir.mkdir(parents=True, exist_ok=True)
     write_config_snapshot(save_dir / "config.yaml", config)
     print("=" * 72, flush=True)
@@ -435,6 +593,11 @@ def main() -> None:
             pin_memory=torch.cuda.is_available(),
             persistent_workers=int(get_config_value(config, "train.num_workers")) > 0,
         )
+        print(
+            f"Micro batch: {loader.batch_size} | gradient accumulation: {accumulation_steps} "
+            f"| nominal effective batch: {loader.batch_size * accumulation_steps}",
+            flush=True,
+        )
         use_class_weights = bool(config.get("loss", {}).get("use_class_weights", True))
         class_weights = train_dataset.class_weights().to(device) if use_class_weights else None
         criterion = build_loss(config, class_weights)
@@ -462,12 +625,14 @@ def main() -> None:
                 not args.no_progress,
                 args.log_interval,
                 grad_clip,
+                accumulation_steps,
             )
             if scheduler is not None:
                 scheduler.step()
             print(
                 f"Epoch {epoch + 1:03d}/{epochs} | loss={loss:.6f} "
-                f"| acc={metrics['accuracy']:.4f} | PD={metrics['pd']:.4f} | PF={metrics['pf']:.4f} "
+                f"| PD={metrics['pd']:.4f} | PF={metrics['pf']:.4f} "
+                f"| optimizer_steps={int(metrics['optimizer_steps'])} "
                 f"| {time.time() - t0:.1f}s",
                 flush=True,
             )
@@ -498,6 +663,7 @@ def main() -> None:
             raise ValueError("eval.protocol=pd_scr_curve 只支持 dataset.type=scr_npz。")
         results = evaluate_scr_curve(
             model,
+            config,
             data_dir,
             int(get_config_value(config, "train.batch_size")),
             device,
@@ -538,9 +704,8 @@ def main() -> None:
     print(f"Saved metrics: {metrics_path}", flush=True)
 
 
-def _metrics(correct: int, total_bins: int, tp: int, fp: int, tn: int, fn: int) -> dict[str, float]:
+def _metrics(tp: int, fp: int, tn: int, fn: int) -> dict[str, float]:
     return {
-        "accuracy": correct / total_bins if total_bins else 0.0,
         "pd": tp / (tp + fn) if (tp + fn) else 0.0,
         "pf": fp / (fp + tn) if (fp + tn) else 0.0,
     }
@@ -572,9 +737,17 @@ def run_metadata(
         "sources": sources or [],
         "polarizations": _as_list(pols) or [],
         "train_augmentation": dataset_cfg.get("augment", {}),
+        "dataset_protocol": dataset_cfg.get("protocol") if dataset_type == "scr_npz" else None,
+        "dataset_normalization": (
+            dataset_cfg.get("normalization", "train_standardize_clip") if dataset_type == "scr_npz" else None
+        ),
+        "model_config": config.get("model", {}),
         "optimizer": config.get("train", {}).get("optimizer", "adamw"),
         "scheduler": config.get("train", {}).get("scheduler", "cosine"),
         "grad_clip": config.get("train", {}).get("grad_clip", 1.0),
+        "gradient_accumulation_steps": int(config.get("train", {}).get("gradient_accumulation_steps", 1)),
+        "nominal_effective_batch_size": int(config.get("train", {}).get("batch_size", 0))
+        * int(config.get("train", {}).get("gradient_accumulation_steps", 1)),
         "loss_use_class_weights": config.get("loss", {}).get("use_class_weights", True),
         "num_train_files": len(train_files),
         "num_test_files": len(test_files),

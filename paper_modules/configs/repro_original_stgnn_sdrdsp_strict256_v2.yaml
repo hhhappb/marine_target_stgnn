@@ -5,11 +5,14 @@ paths:
 dataset:
   type: scr_npz
   data_dir: data/sdrdsp_strict_256_v2
+  protocol: sdrdsp_fig9_local_crop_v2
+  normalization: none
 
 model:
   name: original_stgnn
   pulses: 4
   range_cells: 256
+  gat_dropout: 0.0
 
 loss:
   type: cross_entropy
@@ -18,6 +21,7 @@ loss:
 train:
   epochs: 500
   batch_size: 24
+  gradient_accumulation_steps: 1
   learning_rate: 0.001
   optimizer: adam
   weight_decay: 0.0

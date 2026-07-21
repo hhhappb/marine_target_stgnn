@@ -19,6 +19,13 @@ class OriginalSTGNN(nn.Module):
         self.pulses = int(model_cfg.get("pulses", 4))
         self.range_cells = int(model_cfg.get("range_cells", 256))
         self.backbone = STGNNDetector(P=self.pulses, N=self.range_cells)
+        gat_dropout = model_cfg.get("gat_dropout")
+        if gat_dropout is not None:
+            gat_dropout = float(gat_dropout)
+            if not 0.0 <= gat_dropout < 1.0:
+                raise ValueError(f"model.gat_dropout 必须位于 [0, 1)，实际为 {gat_dropout}。")
+            self.backbone.sfe1.gat.dropout_val = gat_dropout
+            self.backbone.sfe2.gat.dropout_val = gat_dropout
 
     def forward(self, echoes: torch.Tensor, return_features: bool = False):
         if not torch.is_complex(echoes):

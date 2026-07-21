@@ -30,7 +30,8 @@ Feature -> SFE1 -> TFE1 -> SFE2 -> TFE2 -> DetectionHead
 | 原 I/Q 输入通道 | `configs/feature_replacement_original_iq.yaml` |
 | I/Q + 幅相输入通道 | `configs/feature_replacement_iq_amp_phase.yaml` |
 | I/Q + 幅相差分输入通道 | `configs/feature_replacement_iq_amp_phase_diffs.yaml` |
-| 原始 ST-GNN SDRDSP SCR 复现 | `configs/repro_original_stgnn_scr256.yaml` |
+| 旧 SDRDSP 小样本诊断 | `configs/repro_original_stgnn_scr256.yaml` |
+| ST-GNN SDRDSP Fig.9 v2 局部裁剪复现 | `configs/repro_original_stgnn_sdrdsp_strict256_v2.yaml` |
 | IPIX Fig.7 困难点 per-file 对照 | `configs/suites/per_file_fig7_hardpoints_b.yaml` |
 | IPIX Fig.7 困难点 range-roll 增广对照 | `configs/suites/per_file_fig7_hardpoints_shift_aug_b.yaml` |
 | IPIX Fig.7 困难点三臂对照 | `configs/suites/per_file_fig7_hardpoints_three_arm.yaml` |
@@ -73,10 +74,16 @@ logits:    [B, 2, N]
 .\.venv\Scripts\python.exe paper_modules\experiments\train.py --config paper_modules\configs\real_imag_sfe_replacement_radar_prior_dynamic_sfe.yaml --epochs 1 --max-train-windows 64 --max-test-windows-per-file 5 --no-progress --log-interval 1
 ```
 
-运行原始 ST-GNN SDRDSP SCR 复现 smoke：
+生成 SDRDSP Fig.9 v2 数据：
 
 ```powershell
-.\.venv\Scripts\python.exe paper_modules\experiments\train.py --config paper_modules\configs\repro_original_stgnn_scr256.yaml --epochs 2 --no-progress --log-interval 10
+.\.venv\Scripts\python.exe scripts\preprocess_sdrdsp.py --raw-dir datasets\sdrdsp\raw
+```
+
+v2 明确采用 `N=256` 局部裁剪，并通过 manifest 固定 SCR 求和、连续目标注入、目标间距、无归一化和一基目标单元口径。运行完整数据 smoke：
+
+```powershell
+.\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --configs paper_modules\configs\repro_original_stgnn_sdrdsp_strict256_v2.yaml --seeds 42 --epochs 2 --target-pfa 0.001 --name sdrdsp_v2_full_smoke --stop-on-failure
 ```
 
 运行 IPIX Fig.7 困难点 per-file 对照：

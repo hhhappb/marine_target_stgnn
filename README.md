@@ -30,10 +30,16 @@ IPIX module smoke:
 .\.venv\Scripts\python.exe paper_modules\experiments\train.py --config paper_modules\configs\real_imag_sfe_replacement_original_sfe.yaml --epochs 1 --max-train-windows 64 --max-test-windows-per-file 5 --no-progress --log-interval 1
 ```
 
-SDRDSP SCR reproduction smoke:
+生成 SDRDSP Fig.9 v2 数据（`N=256` 局部裁剪，论文第 2083 单元按一基编号处理）：
 
 ```powershell
-.\.venv\Scripts\python.exe paper_modules\experiments\train.py --config paper_modules\configs\repro_original_stgnn_scr256.yaml --epochs 2 --no-progress --log-interval 10
+.\.venv\Scripts\python.exe scripts\preprocess_sdrdsp.py --raw-dir datasets\sdrdsp\raw
+```
+
+运行 SDRDSP v2 完整数据 smoke，并用独立 run_id 保存结果：
+
+```powershell
+.\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --configs paper_modules\configs\repro_original_stgnn_sdrdsp_strict256_v2.yaml --seeds 42 --epochs 2 --target-pfa 0.001 --name sdrdsp_v2_full_smoke --stop-on-failure
 ```
 
 IPIX Fig.7 hard-point per-file protocol check:

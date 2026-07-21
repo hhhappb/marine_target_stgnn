@@ -32,12 +32,18 @@ def build_dataset(config: dict[str, Any], split: str, **overrides: Any):
         data_dir = Path(dataset_cfg.get("data_dir", config.get("paths", {}).get("data_dir", "")))
         if not data_dir:
             raise ValueError("dataset.type=scr_npz 需要 dataset.data_dir 或 paths.data_dir。")
+        model_cfg = config.get("model", {})
         return ScrNpzDataset(
             data_dir=data_dir,
             split=split,
             scr=overrides.get("scr", dataset_cfg.get("scr")),
             max_windows=max_windows,
             seed=seed,
+            norm=overrides.get("norm"),
+            normalization=str(dataset_cfg.get("normalization", "train_standardize_clip")),
+            protocol=dataset_cfg.get("protocol"),
+            expected_pulses=int(model_cfg["pulses"]) if "pulses" in model_cfg else None,
+            expected_range_cells=int(model_cfg["range_cells"]) if "range_cells" in model_cfg else None,
         )
 
     raise ValueError(f"Unknown dataset type: {dataset_type}")

@@ -11,7 +11,30 @@ from torch.utils.data import Dataset
 
 SDRDSP_V2_PROTOCOL = "sdrdsp_fig9_local_crop_v2"
 SDRDSP_PHASE_RCS_PROTOCOL = "sdrdsp_fig9_local_crop_phase_rcs_v1"
-SDRDSP_LOCAL_CROP_PROTOCOLS = {SDRDSP_V2_PROTOCOL, SDRDSP_PHASE_RCS_PROTOCOL}
+SDRDSP_PHASE_ONLY_PROTOCOL = "sdrdsp_fig9_crop256_phase_only_v1"
+SDRDSP_RCS_ONLY_PROTOCOL = "sdrdsp_fig9_crop256_rcs_only_v1"
+SDRDSP_FULL_T1_PROTOCOL = "sdrdsp_fig9_full_t1_ideal_v1"
+SDRDSP_N128_PROTOCOL = "sdrdsp_fig9_local_crop_n128_v1"
+SDRDSP_N512_PROTOCOL = "sdrdsp_fig9_local_crop_n512_v1"
+SDRDSP_LOCAL_CROP_PROTOCOLS = {
+    SDRDSP_V2_PROTOCOL,
+    SDRDSP_PHASE_RCS_PROTOCOL,
+    SDRDSP_PHASE_ONLY_PROTOCOL,
+    SDRDSP_RCS_ONLY_PROTOCOL,
+    SDRDSP_N128_PROTOCOL,
+    SDRDSP_N512_PROTOCOL,
+}
+SDRDSP_STRICT_PROTOCOLS = SDRDSP_LOCAL_CROP_PROTOCOLS | {SDRDSP_FULL_T1_PROTOCOL}
+SDRDSP_N_SCALE_PROTOCOLS = {SDRDSP_N128_PROTOCOL, SDRDSP_N512_PROTOCOL}
+SDRDSP_PROTOCOL_RANGE_CELLS = {
+    SDRDSP_V2_PROTOCOL: 256,
+    SDRDSP_PHASE_RCS_PROTOCOL: 256,
+    SDRDSP_PHASE_ONLY_PROTOCOL: 256,
+    SDRDSP_RCS_ONLY_PROTOCOL: 256,
+    SDRDSP_N128_PROTOCOL: 128,
+    SDRDSP_N512_PROTOCOL: 512,
+    SDRDSP_FULL_T1_PROTOCOL: 2224,
+}
 TRAIN_SCR_VALUES = list(range(-12, 15, 2))
 TEST_SCR_VALUES = list(range(-24, 15, 2))
 
@@ -56,16 +79,13 @@ def validate_sdrdsp_v2_manifest(
         raise ValueError(f"无法读取 SDRDSP v2 manifest: {manifest_path}") from exc
 
     protocol_id = _manifest_value(manifest, "protocol.id")
-    if protocol_id not in SDRDSP_LOCAL_CROP_PROTOCOLS:
-        raise ValueError(f"未知 SDRDSP local-crop protocol: {protocol_id!r}。")
+    if protocol_id not in SDRDSP_STRICT_PROTOCOLS:
+        raise ValueError(f"未知 SDRDSP strict protocol: {protocol_id!r}。")
+    is_full_t1 = protocol_id == SDRDSP_FULL_T1_PROTOCOL
     expected_values = {
-        "dataset": (
-            "SDRDSP Fig. 9 local-crop reproduction"
-            if protocol_id == SDRDSP_V2_PROTOCOL
-            else "SDRDSP Fig. 9 local-crop target-model sensitivity"
-        ),
+        "dataset": _dataset_label(protocol_id),
         "protocol.id": protocol_id,
-        "protocol.scope": "local_crop",
+        "protocol.scope": "full_t1" if is_full_t1 else "local_crop",
         "protocol.paper_experiment": "Fig. 9",
         "protocol.train_background_name": "20210106155330_01_staring.mat",
         "protocol.test_background_name": "20210106155432_01_staring.mat",
@@ -92,16 +112,26 @@ def validate_sdrdsp_v2_manifest(
                 f"SDRDSP v2 manifest 不匹配: {dotted_path}={actual!r}, expected={expected!r}。"
             )
 
-    if protocol_id == SDRDSP_PHASE_RCS_PROTOCOL:
+    factor_settings = {
+        SDRDSP_PHASE_RCS_PROTOCOL: ("phase_noise_swerling1_window", True, True),
+        SDRDSP_PHASE_ONLY_PROTOCOL: ("phase_noise_constant_rcs", True, False),
+        SDRDSP_RCS_ONLY_PROTOCOL: ("ideal_phase_swerling1_window", False, True),
+    }
+    if protocol_id in factor_settings:
+        target_model, phase_enabled, rcs_enabled = factor_settings[protocol_id]
         realistic_values = {
-            "protocol.target_model": "phase_noise_swerling1_window",
-            "protocol.phase_noise_model": "within_window_random_walk",
-            "protocol.phase_noise_std_deg": 10.0,
-            "protocol.random_initial_phase": "per_4_pulse_window",
-            "protocol.rcs_model": "swerling1_window",
-            "protocol.rcs_power_distribution": "exponential_mean_1",
+            "protocol.target_model": target_model,
+            "protocol.phase_noise_model": "within_window_random_walk" if phase_enabled else "none",
+            "protocol.phase_noise_std_deg": 10.0 if phase_enabled else 0.0,
+            "protocol.random_initial_phase": "per_4_pulse_window" if phase_enabled else "none",
+            "protocol.rcs_model": "swerling1_window" if rcs_enabled else "constant",
+            "protocol.rcs_power_distribution": "exponential_mean_1" if rcs_enabled else "constant_1",
             "protocol.rcs_mean_power_normalized": True,
         }
+        if protocol_id in {SDRDSP_PHASE_ONLY_PROTOCOL, SDRDSP_RCS_ONLY_PROTOCOL}:
+            realistic_values["protocol.component_draw_stream"] = (
+                "legacy_combined_v1_draw_all_components_before_factor_toggle"
+            )
         for dotted_path, expected in realistic_values.items():
             actual = _manifest_value(manifest, dotted_path)
             if actual != expected:
@@ -113,11 +143,19 @@ def validate_sdrdsp_v2_manifest(
         for audit in audits:
             for record in audit["target_records"]:
                 if abs(float(record["rcs_mean_power_gain"]) - 1.0) > 1e-6:
-                    raise ValueError("真实化目标的窗级 RCS 平均功率增益未归一化到 1。")
+                    raise ValueError("目标的窗级 RCS 平均功率增益未归一化到 1。")
+                if protocol_id in {SDRDSP_PHASE_ONLY_PROTOCOL, SDRDSP_RCS_ONLY_PROTOCOL}:
+                    draws = record.get("component_draws", {})
+                    if draws.get("phase_factor_enabled") is not phase_enabled:
+                        raise ValueError("manifest 相位因素开关与协议不一致。")
+                    if draws.get("rcs_factor_enabled") is not rcs_enabled:
+                        raise ValueError("manifest RCS 因素开关与协议不一致。")
 
-    if expected_range_cells != 256:
+    expected_protocol_range_cells = SDRDSP_PROTOCOL_RANGE_CELLS[protocol_id]
+    if expected_range_cells != expected_protocol_range_cells:
         raise ValueError(
-            f"{SDRDSP_V2_PROTOCOL} 明确是 N=256 local-crop 协议，实际 model.range_cells={expected_range_cells}。"
+            f"{protocol_id} 明确是 N={expected_protocol_range_cells} 协议，"
+            f"实际 model.range_cells={expected_range_cells}。"
         )
     crop_start = int(_manifest_value(manifest, "crop.crop_start_zero_based"))
     crop_end = int(_manifest_value(manifest, "crop.crop_end_exclusive_zero_based"))
@@ -180,6 +218,16 @@ def _manifest_value(manifest: dict[str, Any], dotted_path: str) -> Any:
             raise ValueError(f"SDRDSP v2 manifest 缺少字段: {dotted_path}。")
         value = value[key]
     return value
+
+
+def _dataset_label(protocol_id: str) -> str:
+    if protocol_id == SDRDSP_V2_PROTOCOL:
+        return "SDRDSP Fig. 9 local-crop reproduction"
+    if protocol_id == SDRDSP_FULL_T1_PROTOCOL:
+        return "SDRDSP Fig. 9 full-T1 feasibility protocol"
+    if protocol_id in SDRDSP_N_SCALE_PROTOCOLS:
+        return "SDRDSP Fig. 9 local-crop N-scale ablation"
+    return "SDRDSP Fig. 9 local-crop target-model sensitivity"
 
 
 def load_scr_arrays(
@@ -256,7 +304,7 @@ class ScrNpzDataset(Dataset):
         self.normalization = normalization
         self.protocol = protocol
         if protocol is not None:
-            if protocol not in SDRDSP_LOCAL_CROP_PROTOCOLS:
+            if protocol not in SDRDSP_STRICT_PROTOCOLS:
                 raise ValueError(f"未知 SCR protocol: {protocol}")
             if normalization != "none":
                 raise ValueError(f"{SDRDSP_V2_PROTOCOL} 必须使用 normalization=none。")
@@ -268,7 +316,7 @@ class ScrNpzDataset(Dataset):
             scr=scr,
             max_windows=max_windows,
             rng=self.rng,
-            require_scr_metadata=protocol in SDRDSP_LOCAL_CROP_PROTOCOLS,
+            require_scr_metadata=protocol in SDRDSP_STRICT_PROTOCOLS,
         )
         if expected_pulses is not None and x.shape[2] != expected_pulses:
             raise ValueError(f"SCR 数据 pulses={x.shape[2]} 与 model.pulses={expected_pulses} 不一致。")
@@ -276,7 +324,7 @@ class ScrNpzDataset(Dataset):
             raise ValueError(
                 f"SCR 数据 range_cells={x.shape[3]} 与 model.range_cells={expected_range_cells} 不一致。"
             )
-        if protocol in SDRDSP_LOCAL_CROP_PROTOCOLS:
+        if protocol in SDRDSP_STRICT_PROTOCOLS:
             expected_positive = 5 if split == "train" else 1
             positive_counts = y.sum(axis=1)
             if np.any(positive_counts != expected_positive):
