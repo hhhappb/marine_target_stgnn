@@ -1,0 +1,50 @@
+paths:
+  data_dir: data/sdrdsp_strict_256_p16_v1
+  save_dir: logs/training/sdrdsp_original_tfe_p16_n256_seed42
+dataset:
+  type: scr_npz
+  data_dir: data/sdrdsp_strict_256_p16_v1
+  protocol: sdrdsp_fig9_local_crop_v2
+  normalization: none
+model:
+  name: sfe_replacement_stgnn
+  pulses: 16
+  range_cells: 256
+radar_features:
+  type: real_imag
+  hidden_channels: 32
+  out_channels: 64
+spatial_graph:
+  type: original_stfe
+  stage1_out_channels: 128
+  stage2_out_channels: 512
+temporal:
+  type: stgnn_tfe
+  stage1_out_channels: 256
+  stage2_out_channels: 1024
+  out_channels: 1024
+clutter_gate:
+  enabled: false
+detection_head:
+  hidden_channels: 512
+loss:
+  type: cross_entropy
+  use_class_weights: false
+diagnostics:
+  temporal: true
+train:
+  epochs: 10
+  batch_size: 24
+  gradient_accumulation_steps: 1
+  learning_rate: 0.001
+  optimizer: adam
+  weight_decay: 0.0
+  scheduler: none
+  grad_clip: null
+  num_workers: 0
+  seed: 42
+eval:
+  protocol: pd_scr_curve
+  threshold_source: train
+  score_space: logit_margin
+  pfa_values: [0.0001, 0.001, 0.01]

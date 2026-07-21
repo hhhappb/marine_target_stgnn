@@ -19,6 +19,11 @@ class TinyComplexDetector(nn.Module):
         return torch.stack([-feature, feature], dim=1)
 
 
+class DiagnosticTinyComplexDetector(TinyComplexDetector):
+    def get_temporal_diagnostics(self) -> dict[str, float]:
+        return {"marker": 1.0}
+
+
 def make_dataset() -> TensorDataset:
     real = torch.tensor(
         [[[1.0, -1.0]], [[2.0, -2.0]], [[3.0, -3.0]], [[4.0, -4.0]], [[5.0, -5.0]]]
@@ -102,3 +107,41 @@ def test_training_metrics_and_logs_omit_accuracy(capsys: pytest.CaptureFixture[s
     )
     assert "accuracy" not in metrics
     assert "acc=" not in capsys.readouterr().out
+
+
+def test_temporal_diagnostics_are_opt_in() -> None:
+    loader = DataLoader(make_dataset(), batch_size=2, shuffle=False)
+    default_model = DiagnosticTinyComplexDetector()
+    default_optimizer = torch.optim.SGD(default_model.parameters(), lr=0.1)
+    _, default_metrics = train_one_epoch(
+        model=default_model,
+        loader=loader,
+        criterion=nn.CrossEntropyLoss(),
+        optimizer=default_optimizer,
+        device=torch.device("cpu"),
+        epoch=1,
+        epochs=1,
+        show_progress=False,
+        log_interval=0,
+        grad_clip=None,
+        gradient_accumulation_steps=1,
+    )
+    assert "diagnostic_marker" not in default_metrics
+
+    enabled_model = DiagnosticTinyComplexDetector()
+    enabled_optimizer = torch.optim.SGD(enabled_model.parameters(), lr=0.1)
+    _, enabled_metrics = train_one_epoch(
+        model=enabled_model,
+        loader=loader,
+        criterion=nn.CrossEntropyLoss(),
+        optimizer=enabled_optimizer,
+        device=torch.device("cpu"),
+        epoch=1,
+        epochs=1,
+        show_progress=False,
+        log_interval=0,
+        grad_clip=None,
+        gradient_accumulation_steps=1,
+        collect_temporal_diagnostics=True,
+    )
+    assert enabled_metrics["diagnostic_marker"] == 1.0

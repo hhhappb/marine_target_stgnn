@@ -14,3 +14,7 @@ class TemporalModule(nn.Module):
 
     def forward(self, x):
         return self.impl(x)
+
+    def get_diagnostics(self) -> dict[str, float]:
+        """返回最近一个 batch 的时间模块诊断量。"""
+        return dict(getattr(self.impl, "last_diagnostics", {}))

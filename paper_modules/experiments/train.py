@@ -44,6 +44,7 @@ def train_one_epoch(
     log_interval: int,
     grad_clip: float | None,
     gradient_accumulation_steps: int = 1,
+    collect_temporal_diagnostics: bool = False,
 ) -> tuple[float, dict[str, float]]:
     if gradient_accumulation_steps < 1:
         raise ValueError(
@@ -52,6 +53,8 @@ def train_one_epoch(
     model.train()
     total_loss = 0.0
     tp = fp = tn = fn = 0
+    diagnostics: list[dict[str, float]] = []
+    gradient_norms: list[float] = []
     progress = tqdm(
         total=len(loader),
         desc=f"Epoch {epoch:03d}/{epochs}",
@@ -72,11 +75,14 @@ def train_one_epoch(
 
             logits = model(echoes)
             loss = criterion(logits, labels)
+            if collect_temporal_diagnostics and hasattr(model, "get_temporal_diagnostics"):
+                diagnostics.append(model.get_temporal_diagnostics())
             window_start = ((batch_idx - 1) // gradient_accumulation_steps) * gradient_accumulation_steps + 1
             window_size = min(gradient_accumulation_steps, len(loader) - window_start + 1)
             (loss / window_size).backward()
             should_step = batch_idx % gradient_accumulation_steps == 0 or batch_idx == len(loader)
             if should_step:
+                gradient_norms.append(_gradient_norm(model))
                 if grad_clip is not None and grad_clip > 0:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                 optimizer.step()
@@ -111,6 +117,14 @@ def train_one_epoch(
         progress.close()
     metrics = _metrics(tp, fp, tn, fn)
     metrics["optimizer_steps"] = float(optimizer_steps)
+    if gradient_norms:
+        metrics["gradient_norm"] = float(sum(gradient_norms) / len(gradient_norms))
+    if diagnostics:
+        names = sorted({name for record in diagnostics for name in record})
+        for name in names:
+            values = [record[name] for record in diagnostics if name in record]
+            if values:
+                metrics[f"diagnostic_{name}"] = float(sum(values) / len(values))
     return total_loss / max(1, len(loader)), metrics
 
 
@@ -334,13 +348,16 @@ def evaluate_scr_curve(
 ) -> dict[str, object]:
     model.eval()
     threshold_source = str(config.get("eval", {}).get("threshold_source", ""))
+    score_space = str(config.get("eval", {}).get("score_space", "o0"))
+    if score_space not in {"o0", "logit_margin"}:
+        raise ValueError(f"pd_scr_curve 不支持 score_space={score_space!r}。")
     if threshold_source != "train":
         raise ValueError(f"pd_scr_curve 必须使用 threshold_source=train，实际为 {threshold_source!r}。")
     train_dataset = build_dataset(config, "train", max_windows=max_threshold_windows, seed=seed)
     if not isinstance(train_dataset, ScrNpzDataset):
         raise TypeError(f"pd_scr_curve 需要 ScrNpzDataset，实际为 {type(train_dataset).__name__}。")
-    train_o0, train_labels = collect_dataset_scores(model, train_dataset, batch_size, device)
-    threshold_clutter = train_o0[train_labels == 0]
+    train_scores, train_labels = collect_dataset_scores(model, train_dataset, batch_size, device, score_space)
+    threshold_clutter = train_scores[train_labels == 0]
     if threshold_clutter.size == 0:
         raise ValueError("SCR train.npz 中没有杂波样本，无法按训练集杂波计算阈值。")
 
@@ -361,25 +378,33 @@ def evaluate_scr_curve(
         )
         if not isinstance(dataset, ScrNpzDataset):
             raise TypeError(f"pd_scr_curve 需要 ScrNpzDataset，实际为 {type(dataset).__name__}。")
-        o0, labels = collect_dataset_scores(model, dataset, batch_size, device)
-        scr_records.append({"scr_db": scr, "o0": o0, "labels": labels})
+        scores, labels = collect_dataset_scores(model, dataset, batch_size, device, score_space)
+        scr_records.append({"scr_db": scr, "scores": scores, "labels": labels})
 
     results: dict[str, object] = {
         "protocol": "pd_scr_curve",
         "threshold_source": "train",
+        "score_space": score_space,
         "num_test_scr_files": len(scr_records),
         "num_clutter_bins_for_threshold": int(threshold_clutter.shape[0]),
         "pfa": {},
     }
     ordered = np.sort(threshold_clutter)
     for pfa in pfa_values:
-        idx = int(np.ceil(pfa * len(ordered))) - 1
-        threshold = float(ordered[max(0, min(idx, len(ordered) - 1))])
+        if score_space == "o0":
+            idx = int(np.ceil(pfa * len(ordered))) - 1
+            threshold = float(ordered[max(0, min(idx, len(ordered) - 1))])
+        else:
+            idx = int(np.ceil((1.0 - pfa) * len(ordered))) - 1
+            threshold = float(ordered[max(0, min(idx, len(ordered) - 1))])
         total = {"TP": 0, "FN": 0, "FP": 0, "TN": 0}
         per_scr = []
         for item in scr_records:
             labels = item["labels"]
-            det = (item["o0"] <= threshold).astype(np.uint8)
+            if score_space == "o0":
+                det = (item["scores"] <= threshold).astype(np.uint8)
+            else:
+                det = (item["scores"] >= threshold).astype(np.uint8)
             counts = {
                 "TP": int(((det == 1) & (labels == 1)).sum()),
                 "FN": int(((det == 0) & (labels == 1)).sum()),
@@ -389,7 +414,18 @@ def evaluate_scr_curve(
             for key in total:
                 total[key] += counts[key]
             per_scr.append({"scr_db": item["scr_db"], **_pd_pf(counts), **counts})
-        results["pfa"][str(pfa)] = {"threshold": threshold, **_pd_pf(total), **total, "per_scr": per_scr}
+        ordered_scr = sorted(per_scr, key=lambda item: int(item["scr_db"]))
+        scr_axis = np.asarray([int(item["scr_db"]) for item in ordered_scr], dtype=np.float64)
+        pd_axis = np.asarray([float(item["PD"]) for item in ordered_scr], dtype=np.float64)
+        scr_span = float(scr_axis[-1] - scr_axis[0]) if scr_axis.size > 1 else 0.0
+        pd_scr_auc = float(np.trapezoid(pd_axis, scr_axis) / scr_span) if scr_span > 0 else 0.0
+        results["pfa"][str(pfa)] = {
+            "threshold": threshold,
+            **_pd_pf(total),
+            **total,
+            "PD_SCR_AUC": pd_scr_auc,
+            "per_scr": per_scr,
+        }
     return results
 
 
@@ -398,6 +434,7 @@ def collect_dataset_scores(
     dataset,
     batch_size: int,
     device: torch.device,
+    score_space: str = "o0",
 ) -> tuple["np.ndarray", "np.ndarray"]:
     import numpy as np
 
@@ -409,8 +446,13 @@ def collect_dataset_scores(
             real = real.to(device, non_blocking=True)
             imag = imag.to(device, non_blocking=True)
             logits = model(torch.complex(real, imag))
-            probs = torch.softmax(logits, dim=1)[:, 0, :].cpu().numpy()
-            o0_parts.append(probs)
+            if score_space == "o0":
+                scores = torch.softmax(logits, dim=1)[:, 0, :]
+            elif score_space == "logit_margin":
+                scores = logits[:, 1, :] - logits[:, 0, :]
+            else:
+                raise ValueError(f"未知 score_space: {score_space}")
+            o0_parts.append(scores.cpu().numpy())
             label_parts.append(labels.numpy())
     if not o0_parts:
         raise ValueError("数据集为空，无法评估。")
@@ -511,6 +553,10 @@ def main() -> None:
     eval_protocol = str(config.get("eval", {}).get("protocol", "per_file_pol"))
     dataset_type = str(config.get("dataset", {}).get("type", "ipix_window"))
     dataset_cfg = config.get("dataset", {})
+    diagnostics_cfg = config.get("diagnostics", {})
+    if not isinstance(diagnostics_cfg, dict):
+        raise ValueError("diagnostics 配置必须是 mapping。")
+    temporal_diagnostics_enabled = bool(diagnostics_cfg.get("temporal", False))
     pols = dataset_cfg.get("polarizations", get_config_value(config, "ipix.polarizations"))
     sources = _as_list(dataset_cfg.get("sources", dataset_cfg.get("source")))
 
@@ -613,6 +659,7 @@ def main() -> None:
         best_loss = float("inf")
         best_path = save_dir / "best_model.pth"
         t0 = time.time()
+        training_history: list[dict[str, float]] = []
         for epoch in range(epochs):
             loss, metrics = train_one_epoch(
                 model,
@@ -626,6 +673,7 @@ def main() -> None:
                 args.log_interval,
                 grad_clip,
                 accumulation_steps,
+                temporal_diagnostics_enabled,
             )
             if scheduler is not None:
                 scheduler.step()
@@ -636,12 +684,19 @@ def main() -> None:
                 f"| {time.time() - t0:.1f}s",
                 flush=True,
             )
+            training_history.append({"epoch": float(epoch + 1), "loss": float(loss), **metrics})
             if loss < best_loss:
                 best_loss = loss
                 save_checkpoint(best_path, model, config, {"best_loss": best_loss, "epoch": epoch + 1})
                 print(f"  saved best checkpoint: {best_path}", flush=True)
         save_checkpoint(save_dir / "final_model.pth", model, config, {"best_loss": best_loss, "epoch": epochs})
         load_checkpoint(best_path, model, device)
+    if args.eval_only:
+        training_history = []
+        previous_metrics = save_dir / "metrics.json"
+        if previous_metrics.exists():
+            previous_results = json.loads(previous_metrics.read_text(encoding="utf-8"))
+            training_history = list(previous_results.get("training_history", []))
 
     if eval_protocol == "per_file_pol":
         if dataset_type != "ipix_window":
@@ -690,6 +745,10 @@ def main() -> None:
             checkpoint_path=checkpoint_path,
         )
     )
+    results["training_history"] = training_history
+    if temporal_diagnostics_enabled and hasattr(model, "get_temporal_diagnostics"):
+        results["final_temporal_diagnostics"] = model.get_temporal_diagnostics()
+        results["final_temporal_diagnostics_scope"] = "last_evaluation_batch"
     results_path = save_dir / "eval_results.json"
     results_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
     metrics_path = save_dir / "metrics.json"
@@ -709,6 +768,15 @@ def _metrics(tp: int, fp: int, tn: int, fn: int) -> dict[str, float]:
         "pd": tp / (tp + fn) if (tp + fn) else 0.0,
         "pf": fp / (fp + tn) if (fp + tn) else 0.0,
     }
+
+
+def _gradient_norm(model: nn.Module) -> float:
+    """计算当前 optimizer step 前的全模型梯度二范数。"""
+    squared = 0.0
+    for parameter in model.parameters():
+        if parameter.grad is not None:
+            squared += float(parameter.grad.detach().float().square().sum().item())
+    return squared**0.5
 
 
 def _pd_pf(counts: dict[str, int]) -> dict[str, float]:

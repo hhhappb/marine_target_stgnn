@@ -21,6 +21,7 @@ import numpy as np
 import scipy.io as sio
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from paper_modules.experiments.train import git_commit, load_checkpoint
 from paper_modules.datasets.ipix_window import list_split_files, load_ipix_arrays, parse_source_and_pol, seed_everything
@@ -32,6 +33,7 @@ from paper_modules.datasets.scr_npz import (
     validate_sdrdsp_v2_manifest,
 )
 from paper_modules.models import build_model
+from paper_modules.models.modules.temporal_modules.pulse_attention_tfe import PulseAttentionOnlyTFE
 from utils.config import get_config_value, load_config
 
 
@@ -43,7 +45,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pfa-values", type=float, nargs="+", default=[0.0001, 0.001, 0.01])
     parser.add_argument(
         "--probes",
-        choices=["d1", "d2", "d3", "d4", "cross", "scr_audit", "stage6_finalize"],
+        choices=[
+            "d1",
+            "d2",
+            "d3",
+            "d4",
+            "cross",
+            "scr_audit",
+            "temporal_attention_audit",
+            "attention_scale_scan",
+            "stage6_finalize",
+        ],
         nargs="+",
         default=["d1", "d2", "d3"],
     )
@@ -63,6 +75,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--max-test-windows-per-file", type=int, default=None)
     parser.add_argument("--max-threshold-windows", type=int, default=None)
+    parser.add_argument(
+        "--attention-modes",
+        choices=["learned", "uniform", "identity", "residual_off"],
+        nargs="+",
+        default=["learned", "uniform", "identity", "residual_off"],
+    )
+    parser.add_argument("--attention-neighborhood-radius", type=int, default=2)
+    parser.add_argument("--attention-remote-radius", type=int, default=8)
+    parser.add_argument(
+        "--attention-logit-multipliers",
+        type=float,
+        nargs="+",
+        default=[1.0, 2.0, 4.0, 8.0, 16.0],
+    )
     parser.add_argument("--output", type=Path, default=None)
     return parser.parse_args()
 
@@ -84,6 +110,20 @@ def main() -> None:
     if dataset_type == "scr_npz" and args.probes == ["scr_audit"]:
         run_scr_distribution_audit(args, config)
         return
+    if dataset_type == "scr_npz" and args.probes == ["temporal_attention_audit"]:
+        if args.checkpoint is None or not args.checkpoint.exists():
+            raise SystemExit(f"Checkpoint not found: {args.checkpoint}")
+        run_temporal_attention_audit(args, config, device, seed)
+        return
+    if dataset_type == "scr_npz" and args.probes == ["attention_scale_scan"]:
+        if args.checkpoint is None or not args.checkpoint.exists():
+            raise SystemExit(f"Checkpoint not found: {args.checkpoint}")
+        run_attention_scale_scan(args, config, device, seed)
+        return
+    if "temporal_attention_audit" in args.probes:
+        raise ValueError("temporal_attention_audit 必须单独用于 SDRDSP scr_npz。")
+    if "attention_scale_scan" in args.probes:
+        raise ValueError("attention_scale_scan 必须单独用于 SDRDSP scr_npz。")
     if "scr_audit" in args.probes:
         raise ValueError("scr_audit 必须单独运行，不能与模型推理探针混用。")
     if args.checkpoint is None or not args.checkpoint.exists():
@@ -1173,6 +1213,896 @@ def build_stage6_report(
             "",
         ]
     )
+
+
+def run_temporal_attention_audit(
+    args: argparse.Namespace,
+    config: dict[str, Any],
+    device: torch.device,
+    seed: int,
+) -> None:
+    """在冻结 pulse-attention checkpoint 上做分层与反事实评估。"""
+    dataset_cfg = config.get("dataset", {})
+    data_dir = Path(dataset_cfg.get("data_dir", get_config_value(config, "paths.data_dir")))
+    protocol = str(dataset_cfg.get("protocol", ""))
+    if protocol != SDRDSP_V2_PROTOCOL:
+        raise ValueError(
+            "temporal_attention_audit 只允许在 sdrdsp_fig9_local_crop_v2 理想目标协议上运行。"
+        )
+    pulses = int(get_config_value(config, "model.pulses"))
+    range_cells = int(get_config_value(config, "model.range_cells"))
+    validate_sdrdsp_v2_manifest(data_dir, pulses, range_cells)
+    if args.attention_neighborhood_radius < 1:
+        raise ValueError("--attention-neighborhood-radius 必须至少为 1。")
+    if args.attention_remote_radius <= args.attention_neighborhood_radius:
+        raise ValueError("--attention-remote-radius 必须大于 neighborhood radius。")
+    pfa_values = validate_pfa_values(args.pfa_values)
+    batch_size = args.batch_size or int(get_config_value(config, "train.batch_size"))
+    if batch_size <= 0:
+        raise ValueError(f"batch_size 必须为正整数，实际为 {batch_size}。")
+
+    model = build_model(config).to(device)
+    load_checkpoint(args.checkpoint, model, device)
+    model.eval()
+    attention_module = _get_pulse_attention_module(model)
+    for mode in args.attention_modes:
+        attention_module.set_counterfactual_mode(mode)
+
+    train_x, train_y, _ = load_scr_arrays(
+        data_dir,
+        "train",
+        rng=np.random.default_rng(seed),
+        require_scr_metadata=True,
+    )
+    test_files = list_test_scr_files(data_dir)
+    mode_results: dict[str, Any] = {}
+    for mode in args.attention_modes:
+        attention_module.set_counterfactual_mode(mode)
+        train_scores = infer_temporal_audit_scores(model, train_x, batch_size, device, capture_cells=False)
+        train_clutter = train_scores["scores"][train_y == 0]
+        if train_clutter.size == 0:
+            raise ValueError(f"模式 {mode} 的训练集没有可用杂波分数。")
+        calibrations = {
+            str(pfa): strict_rank_threshold(train_clutter, pfa) for pfa in pfa_values
+        }
+        del train_scores, train_clutter
+
+        records: list[dict[str, Any]] = []
+        per_scr_diagnostics: list[dict[str, Any]] = []
+        low_scr_values = _empty_attention_group_values()
+        for path in test_files:
+            scr = int(path.stem.replace("test_scr_", ""))
+            x, y, _ = load_scr_arrays(
+                path.parent,
+                "test",
+                scr=scr,
+                max_windows=args.max_test_windows_per_file,
+                rng=np.random.default_rng(seed),
+                require_scr_metadata=True,
+            )
+            inferred = infer_temporal_audit_scores(model, x, batch_size, device, capture_cells=True)
+            records.append({"scr_db": scr, "labels": y, "logit_margin": inferred["scores"]})
+            group_diagnostics = summarize_attention_groups(
+                y,
+                inferred["cell_diagnostics"],
+                args.attention_neighborhood_radius,
+                args.attention_remote_radius,
+            )
+            per_scr_diagnostics.append(
+                {"scr_db": scr, "num_windows": int(len(y)), "groups": group_diagnostics}
+            )
+            if scr <= -20:
+                append_attention_group_values(
+                    low_scr_values,
+                    y,
+                    inferred["cell_diagnostics"],
+                    args.attention_neighborhood_radius,
+                    args.attention_remote_radius,
+                )
+            del x, y, inferred
+
+        performance = {}
+        for pfa in pfa_values:
+            threshold = calibrations[str(pfa)]["threshold"]
+            evaluated = evaluate_sdrdsp_records(records, "logit_margin", threshold)
+            low_scr = [item["PD"] for item in evaluated["per_scr"] if item["scr_db"] <= -20]
+            performance[str(pfa)] = {
+                "calibration": calibrations[str(pfa)],
+                "test": evaluated,
+                "low_scr_mean_PD": float(np.mean(low_scr)) if low_scr else None,
+            }
+
+        mode_results[mode] = {
+            "counterfactual_mode": mode,
+            "attention_shape": attention_module.last_attention_shape,
+            "calibration": calibrations,
+            "performance": performance,
+            "per_scr_diagnostics": per_scr_diagnostics,
+            "low_scr_group_diagnostics": finalize_attention_group_values(low_scr_values),
+        }
+        del records
+
+    frozen_checks = run_frozen_attention_checks(
+        model=model,
+        attention_module=attention_module,
+        train_x=train_x,
+        train_y=train_y,
+        batch_size=batch_size,
+        device=device,
+    )
+    output_path = args.output or default_temporal_attention_audit_output_path()
+    if output_path.exists():
+        raise FileExistsError(f"拒绝覆盖已有时间注意力诊断结果: {output_path}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    results: dict[str, Any] = {
+        "protocol": "sdrdsp_temporal_attention_audit_v1",
+        "config": str(args.config),
+        "checkpoint": str(args.checkpoint),
+        "git_commit": git_commit(),
+        "device": str(device),
+        "data_dir": str(data_dir),
+        "dataset_protocol": protocol,
+        "batch_size": batch_size,
+        "seed": seed,
+        "pfa_values": pfa_values,
+        "threshold_source": "train_clutter_per_counterfactual_mode",
+        "attention_modes": list(args.attention_modes),
+        "attention_shape_definition": "[B*N, H, P, P]",
+        "neighborhood_radius": args.attention_neighborhood_radius,
+        "remote_radius": args.attention_remote_radius,
+        "num_train_windows": int(len(train_x)),
+        "num_test_scr_files": len(test_files),
+        "max_test_windows_per_file": args.max_test_windows_per_file,
+        "modes": mode_results,
+        "frozen_checkpoint_checks": frozen_checks,
+        "interpretation_rules": [
+            "learned 与 uniform 的性能差异用于判断 Q/K 选择性是否必要；",
+            "uniform 与 identity 的差异用于判断跨 pulse 聚合是否优于逐 pulse 投影残差；",
+            "residual_off 用于判断收益是否完全依赖注意力残差路径；",
+            "target/neighborhood/remote_clutter 分组按每个窗口的真实目标 cell 与距离索引划分，未使用测试分数确定分组。",
+        ],
+    }
+    output_path.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
+    report_path = output_path.with_name("summary.md")
+    report_path.write_text(build_temporal_attention_report(results), encoding="utf-8")
+    print_temporal_attention_summary(results)
+    print_frozen_attention_check_summary(frozen_checks)
+    print(f"Saved temporal attention audit: {output_path}", flush=True)
+    print(f"Saved temporal attention summary: {report_path}", flush=True)
+
+
+def run_attention_scale_scan(
+    args: argparse.Namespace,
+    config: dict[str, Any],
+    device: torch.device,
+    seed: int,
+) -> None:
+    """扫描冻结 checkpoint 的 attention logits 倍率，不执行训练或参数更新。"""
+    dataset_cfg = config.get("dataset", {})
+    data_dir = Path(dataset_cfg.get("data_dir", get_config_value(config, "paths.data_dir")))
+    protocol = str(dataset_cfg.get("protocol", ""))
+    if protocol != SDRDSP_V2_PROTOCOL:
+        raise ValueError(
+            "attention_scale_scan 只允许在 sdrdsp_fig9_local_crop_v2 理想目标协议上运行。"
+        )
+    pulses = int(get_config_value(config, "model.pulses"))
+    range_cells = int(get_config_value(config, "model.range_cells"))
+    validate_sdrdsp_v2_manifest(data_dir, pulses, range_cells)
+    pfa_values = validate_pfa_values(args.pfa_values)
+    batch_size = args.batch_size or int(get_config_value(config, "train.batch_size"))
+    if batch_size <= 0:
+        raise ValueError(f"batch_size 必须为正整数，实际为 {batch_size}。")
+    multipliers = [float(value) for value in args.attention_logit_multipliers]
+    if not multipliers or any(not np.isfinite(value) or value <= 0.0 for value in multipliers):
+        raise ValueError(f"attention logits 倍率必须为有限正数，实际为 {multipliers}。")
+    if len(set(multipliers)) != len(multipliers):
+        raise ValueError(f"attention logits 倍率不允许重复，实际为 {multipliers}。")
+
+    model = build_model(config).to(device)
+    load_checkpoint(args.checkpoint, model, device)
+    model.eval()
+    attention_module = _get_pulse_attention_module(model)
+
+    train_x, train_y, _ = load_scr_arrays(
+        data_dir,
+        "train",
+        rng=np.random.default_rng(seed),
+        require_scr_metadata=True,
+    )
+    test_inputs: list[tuple[int, np.ndarray, np.ndarray]] = []
+    test_rng = np.random.default_rng(seed)
+    for path in list_test_scr_files(data_dir):
+        scr = int(path.stem.replace("test_scr_", ""))
+        x, y, _ = load_scr_arrays(
+            path.parent,
+            "test",
+            scr=scr,
+            max_windows=args.max_test_windows_per_file,
+            rng=test_rng,
+            require_scr_metadata=True,
+        )
+        test_inputs.append((scr, x, y))
+
+    mode_specs = [("learned", value) for value in multipliers]
+    mode_specs.append(("forced_uniform", None))
+    mode_results: dict[str, Any] = {}
+    try:
+        for mode, multiplier in mode_specs:
+            attention_module.set_counterfactual_mode(mode if mode == "learned" else "uniform")
+            attention_module.set_diagnostic_logit_multiplier(multiplier or 1.0)
+            train_scores = infer_temporal_audit_scores(
+                model, train_x, batch_size, device, capture_cells=False
+            )
+            train_clutter = train_scores["scores"][train_y == 0]
+            if train_clutter.size == 0:
+                raise ValueError(f"扫描模式 {mode} 的训练集没有可用杂波分数。")
+            calibrations = {
+                str(pfa): strict_rank_threshold(train_clutter, pfa) for pfa in pfa_values
+            }
+            del train_scores, train_clutter
+
+            records: list[dict[str, Any]] = []
+            test_group_values = _empty_attention_group_values()
+            low_scr_group_values = _empty_attention_group_values()
+            for scr, x, y in test_inputs:
+                inferred = infer_temporal_audit_scores(
+                    model, x, batch_size, device, capture_cells=True
+                )
+                records.append({"scr_db": scr, "labels": y, "logit_margin": inferred["scores"]})
+                append_attention_group_values(
+                    test_group_values,
+                    y,
+                    inferred["cell_diagnostics"],
+                    args.attention_neighborhood_radius,
+                    args.attention_remote_radius,
+                )
+                if scr <= -20:
+                    append_attention_group_values(
+                        low_scr_group_values,
+                        y,
+                        inferred["cell_diagnostics"],
+                        args.attention_neighborhood_radius,
+                        args.attention_remote_radius,
+                    )
+                del inferred
+
+            performance: dict[str, Any] = {}
+            for pfa in pfa_values:
+                threshold = calibrations[str(pfa)]["threshold"]
+                evaluated = evaluate_sdrdsp_records(records, "logit_margin", threshold)
+                per_scr = evaluated["per_scr"]
+                ordered = sorted(per_scr, key=lambda item: int(item["scr_db"]))
+                scr_axis = np.asarray([item["scr_db"] for item in ordered], dtype=np.float64)
+                pd_axis = np.asarray([item["PD"] for item in ordered], dtype=np.float64)
+                scr_span = float(scr_axis[-1] - scr_axis[0]) if scr_axis.size > 1 else 0.0
+                pd_scr_auc = float(np.trapezoid(pd_axis, scr_axis) / scr_span) if scr_span > 0 else 0.0
+                low_scr = [item["PD"] for item in ordered if int(item["scr_db"]) <= -20]
+                performance[str(pfa)] = {
+                    "calibration": calibrations[str(pfa)],
+                    "test": evaluated,
+                    "PD_SCR_AUC": pd_scr_auc,
+                    "low_scr_mean_PD": float(np.mean(low_scr)) if low_scr else None,
+                    "pf_guardrail_pass": bool(evaluated["PF"] <= 2.0 * pfa),
+                }
+            mode_results[_attention_scale_result_key(mode, multiplier)] = {
+                "counterfactual_mode": mode,
+                "logit_multiplier": multiplier,
+                "attention_shape": attention_module.last_attention_shape,
+                "calibration": calibrations,
+                "performance": performance,
+                "test_group_diagnostics": finalize_attention_group_values(test_group_values),
+                "low_scr_group_diagnostics": finalize_attention_group_values(low_scr_group_values),
+            }
+            del records
+    finally:
+        attention_module.set_counterfactual_mode("learned")
+        attention_module.set_diagnostic_logit_multiplier(1.0)
+        model.zero_grad(set_to_none=True)
+
+    output_path = args.output or default_attention_scale_scan_output_path()
+    if output_path.exists():
+        raise FileExistsError(f"拒绝覆盖已有 attention scale scan 结果: {output_path}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    results: dict[str, Any] = {
+        "protocol": "sdrdsp_attention_scale_scan_v1",
+        "config": str(args.config),
+        "checkpoint": str(args.checkpoint),
+        "git_commit": git_commit(),
+        "device": str(device),
+        "data_dir": str(data_dir),
+        "dataset_protocol": protocol,
+        "batch_size": batch_size,
+        "seed": seed,
+        "pfa_values": pfa_values,
+        "threshold_source": "train_clutter_per_scale_or_forced_uniform",
+        "score_space": "logit_margin",
+        "logit_multipliers": multipliers,
+        "attention_shape_definition": "[B*N, H, P, P]",
+        "neighborhood_radius": args.attention_neighborhood_radius,
+        "remote_radius": args.attention_remote_radius,
+        "num_train_windows": int(len(train_x)),
+        "num_test_scr_files": len(test_inputs),
+        "test_windows_per_file": {str(scr): int(len(x)) for scr, x, _ in test_inputs},
+        "max_test_windows_per_file": args.max_test_windows_per_file,
+        "modes": mode_results,
+        "checkpoint_retrained": False,
+        "optimizer_step_called": False,
+        "interpretation_rules": [
+            "每个 learned 倍率和 forced_uniform 都独立使用训练杂波校准阈值，不共用原始阈值。",
+            "PD_SCR_AUC 是测试 SCR 轴上的归一化 PD-SCR 梯形面积；当前扫描是冻结 checkpoint 诊断。",
+            "forced_uniform 仅作为同一 checkpoint 的反事实，不等价于从头训练 fixed-uniform 模型。",
+            "若倍率提升同时伴随 target 与 clutter attention entropy 的合理分离，才支持继续训练有界 learnable temperature。",
+        ],
+    }
+    output_path.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
+    report_path = output_path.with_name("summary.md")
+    report_path.write_text(build_attention_scale_scan_report(results), encoding="utf-8")
+    print_attention_scale_scan_summary(results)
+    print(f"Saved attention scale scan: {output_path}", flush=True)
+    print(f"Saved attention scale summary: {report_path}", flush=True)
+
+
+def _attention_scale_result_key(mode: str, multiplier: float | None) -> str:
+    if mode == "forced_uniform":
+        return "forced_uniform"
+    return f"learned_x{multiplier:g}"
+
+
+def default_attention_scale_scan_output_path() -> Path:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return Path("logs") / "training" / f"{stamp}_sdrdsp_attention_scale_scan" / "diagnostics.json"
+
+
+def build_attention_scale_scan_report(results: dict[str, Any]) -> str:
+    pfa_key = "0.001" if "0.001" in {str(value) for value in results["pfa_values"]} else str(results["pfa_values"][0])
+    lines = [
+        "# SDRDSP attention logits scale scan（冻结 checkpoint）",
+        "",
+        f"- 协议：`{results['dataset_protocol']}`",
+        f"- checkpoint：`{results['checkpoint']}`",
+        f"- 评分：`{results['score_space']}`；阈值来源：`{results['threshold_source']}`",
+        f"- 测试窗口上限：`{results['max_test_windows_per_file']}`（`null` 表示未截断）",
+        "- 本扫描不训练、不调用 optimizer step；所有倍率和 forced-uniform 使用同一冻结 checkpoint。",
+        "",
+        f"## Pfa={pfa_key} 性能与注意力熵",
+        "",
+        "| 模式 | PD | PF | PD-SCR AUC | 低SCR平均PD | target entropy | all clutter entropy |",
+        "|---|---:|---:|---:|---:|---:|---:|",
+    ]
+    for key, payload in results["modes"].items():
+        performance = payload["performance"][pfa_key]
+        test = performance["test"]
+        groups = payload["test_group_diagnostics"]
+        target_entropy = groups["target"]["attention_entropy"]["mean"]
+        clutter_entropy = groups["all_clutter"]["attention_entropy"]["mean"]
+        lines.append(
+            f"| {key} | {test['PD']:.6f} | {test['PF']:.8f} | {performance['PD_SCR_AUC']:.6f} | "
+            f"{performance['low_scr_mean_PD']:.6f} | {target_entropy:.6f} | {clutter_entropy:.6f} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## 低 SCR 注意力熵",
+            "",
+            "以下为 SCR≤-20 dB 的目标 cell 与全部杂波 cell 分组均值。",
+            "",
+            "| 模式 | target entropy | all clutter entropy | target max weight | clutter max weight |",
+            "|---|---:|---:|---:|---:|",
+        ]
+    )
+    for key, payload in results["modes"].items():
+        groups = payload["low_scr_group_diagnostics"]
+        target = groups["target"]
+        clutter = groups["all_clutter"]
+        lines.append(
+            f"| {key} | {target['attention_entropy']['mean']:.6f} | "
+            f"{clutter['attention_entropy']['mean']:.6f} | "
+            f"{target['attention_max_weight']['mean']:.6f} | "
+            f"{clutter['attention_max_weight']['mean']:.6f} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## 判定提示",
+            "",
+            "- 倍率扫描只回答现有 Q/K 方向在改变 softmax 温度后是否有冻结性能增益，不能证明重新训练后的 learnable temperature 一定有效。",
+            "- forced_uniform 是当前 learned checkpoint 的反事实；它不替代独立训练的 fixed-uniform baseline。",
+            "- 若倍率与 forced-uniform 在相近实际 PF 下没有稳定差异，停止 Q/K attention 方向，不启动新的温度训练。",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def print_attention_scale_scan_summary(results: dict[str, Any]) -> None:
+    pfa_key = "0.001" if "0.001" in {str(value) for value in results["pfa_values"]} else str(results["pfa_values"][0])
+    print(f"SDRDSP attention scale scan summary (Pfa={pfa_key})", flush=True)
+    for key, payload in results["modes"].items():
+        performance = payload["performance"][pfa_key]
+        test = performance["test"]
+        groups = payload["test_group_diagnostics"]
+        print(
+            f"{key:>16} | PD={test['PD']:.6f} | PF={test['PF']:.8f} | "
+            f"AUC={performance['PD_SCR_AUC']:.6f} | low_scr_PD={performance['low_scr_mean_PD']:.6f} | "
+            f"H_target={groups['target']['attention_entropy']['mean']:.6f} | "
+            f"H_clutter={groups['all_clutter']['attention_entropy']['mean']:.6f}",
+            flush=True,
+        )
+
+
+def _get_pulse_attention_module(model: nn.Module) -> PulseAttentionOnlyTFE:
+    module = getattr(getattr(model, "tfe1", None), "impl", None)
+    if not isinstance(module, PulseAttentionOnlyTFE):
+        actual = type(module).__name__ if module is not None else "missing"
+        raise TypeError(
+            "temporal_attention_audit 要求 TFE1 为 pulse_attention_only_tfe，"
+            f"实际为 {actual}。"
+        )
+    return module
+
+
+def run_frozen_attention_checks(
+    model: nn.Module,
+    attention_module: PulseAttentionOnlyTFE,
+    train_x: np.ndarray,
+    train_y: np.ndarray,
+    batch_size: int,
+    device: torch.device,
+) -> dict[str, Any]:
+    """在不更新权重的前提下检查 Q/K 梯度、logit 温度和置零反事实。"""
+    if len(train_x) == 0 or train_x.shape[1] != 2:
+        raise ValueError("冻结注意力检查需要非空的 [B, 2, P, N] 训练数组。")
+    if train_y.shape[0] != train_x.shape[0]:
+        raise ValueError("冻结注意力检查的 X/y 窗口数不一致。")
+
+    attention_module.set_counterfactual_mode("learned")
+    attention_module.set_diagnostic_logit_multiplier(1.0)
+    model.eval()
+    parameter_snapshot = {
+        name: parameter.detach().cpu().clone() for name, parameter in model.named_parameters()
+    }
+    num_batches = min(8, max(1, (len(train_x) + batch_size - 1) // batch_size))
+    batch_x = train_x[: min(batch_size, len(train_x))]
+
+    logits_parts: list[torch.Tensor] = []
+    weight_parts: list[torch.Tensor] = []
+    for batch_index in range(num_batches):
+        start = batch_index * batch_size
+        end = min(start + batch_size, len(train_x))
+        if start >= end:
+            break
+        _, weights, pre_softmax = _forward_attention_snapshot(
+            model, attention_module, train_x[start:end], device
+        )
+        logits_parts.append(pre_softmax)
+        weight_parts.append(weights)
+    pre_softmax_all = torch.cat(logits_parts, dim=0)
+    weights_all = torch.cat(weight_parts, dim=0)
+    pulses = int(weights_all.shape[-1])
+    logit_row_range = pre_softmax_all.amax(dim=-1) - pre_softmax_all.amin(dim=-1)
+    entropy = -(
+        weights_all.clamp_min(1e-8) * weights_all.clamp_min(1e-8).log()
+    ).sum(dim=-1) / float(np.log(pulses))
+    kl_uniform = (
+        weights_all.clamp_min(1e-8)
+        * (weights_all.clamp_min(1e-8) * float(pulses)).log()
+    ).sum(dim=-1)
+    logit_stats = {
+        "num_rows": int(pre_softmax_all.shape[0] * pre_softmax_all.shape[1] * pre_softmax_all.shape[2]),
+        "logit_mean": float(pre_softmax_all.mean().item()),
+        "logit_std": float(pre_softmax_all.std().item()),
+        "logit_min": float(pre_softmax_all.min().item()),
+        "logit_max": float(pre_softmax_all.max().item()),
+        "row_range_mean": float(logit_row_range.mean().item()),
+        "row_range_p95": float(torch.quantile(logit_row_range.flatten(), 0.95).item()),
+        "normalized_entropy_mean": float(entropy.mean().item()),
+        "normalized_entropy_p05": float(torch.quantile(entropy.flatten(), 0.05).item()),
+        "kl_to_uniform_mean": float(kl_uniform.mean().item()),
+        "max_weight_mean": float(weights_all.amax(dim=-1).mean().item()),
+        "max_weight_p95": float(torch.quantile(weights_all.amax(dim=-1).flatten(), 0.95).item()),
+        "pulses": pulses,
+    }
+
+    gradient_records: list[dict[str, float]] = []
+    for batch_index in range(num_batches):
+        start = batch_index * batch_size
+        end = min(start + batch_size, len(train_x))
+        if start >= end:
+            break
+        model.zero_grad(set_to_none=True)
+        real = torch.from_numpy(train_x[start:end, 0].astype(np.float32, copy=False)).to(device)
+        imag = torch.from_numpy(train_x[start:end, 1].astype(np.float32, copy=False)).to(device)
+        labels = torch.from_numpy(train_y[start:end].astype(np.int64, copy=False)).to(device)
+        logits = model(torch.complex(real, imag))
+        loss = F.cross_entropy(logits, labels)
+        loss.backward()
+        record: dict[str, float] = {"loss": float(loss.detach().item())}
+        for name, parameter in (("q", attention_module.q.weight), ("k", attention_module.k.weight)):
+            gradient = parameter.grad
+            gradient_norm = float(gradient.detach().float().norm().item()) if gradient is not None else 0.0
+            parameter_norm = float(parameter.detach().float().norm().item())
+            record[f"{name}_gradient_norm"] = gradient_norm
+            record[f"{name}_relative_gradient_norm"] = gradient_norm / (parameter_norm + 1e-12)
+        gradient_records.append(record)
+    model.zero_grad(set_to_none=True)
+
+    def summarize_gradients(name: str) -> dict[str, float]:
+        values = np.asarray([item[f"{name}_gradient_norm"] for item in gradient_records], dtype=np.float64)
+        relative = np.asarray(
+            [item[f"{name}_relative_gradient_norm"] for item in gradient_records], dtype=np.float64
+        )
+        return {
+            "mean_norm": float(values.mean()),
+            "min_norm": float(values.min()),
+            "max_norm": float(values.max()),
+            "nonzero_fraction": float(np.mean(values > 0.0)),
+            "mean_relative_norm": float(relative.mean()),
+        }
+
+    gradient_check = {
+        "num_batches": len(gradient_records),
+        "mean_loss": float(np.mean([item["loss"] for item in gradient_records])),
+        "optimizer_step_called": False,
+        "q_weight": summarize_gradients("q"),
+        "k_weight": summarize_gradients("k"),
+    }
+
+    base_output, base_weights, base_logits = _forward_attention_snapshot(
+        model, attention_module, batch_x, device
+    )
+    attention_module.set_diagnostic_logit_multiplier(10.0)
+    scaled_output, scaled_weights, scaled_logits = _forward_attention_snapshot(
+        model, attention_module, batch_x, device
+    )
+    attention_module.set_diagnostic_logit_multiplier(1.0)
+
+    q_weight = attention_module.q.weight.detach().clone()
+    k_weight = attention_module.k.weight.detach().clone()
+    q_bias = attention_module.q.bias.detach().clone() if attention_module.q.bias is not None else None
+    k_bias = attention_module.k.bias.detach().clone() if attention_module.k.bias is not None else None
+    try:
+        with torch.no_grad():
+            attention_module.q.weight.zero_()
+            attention_module.k.weight.zero_()
+            if attention_module.q.bias is not None:
+                attention_module.q.bias.zero_()
+            if attention_module.k.bias is not None:
+                attention_module.k.bias.zero_()
+        zero_output, zero_weights, zero_logits = _forward_attention_snapshot(
+            model, attention_module, batch_x, device
+        )
+    finally:
+        with torch.no_grad():
+            attention_module.q.weight.copy_(q_weight)
+            attention_module.k.weight.copy_(k_weight)
+            if q_bias is not None:
+                attention_module.q.bias.copy_(q_bias)
+            if k_bias is not None:
+                attention_module.k.bias.copy_(k_bias)
+        attention_module.set_diagnostic_logit_multiplier(1.0)
+        attention_module.set_counterfactual_mode("learned")
+        model.zero_grad(set_to_none=True)
+
+    uniform = torch.full_like(zero_weights, 1.0 / float(pulses))
+    results = {
+        "gradient_check": gradient_check,
+        "pre_softmax_logit_stats": logit_stats,
+        "logit_multiplier_10x": {
+            "multiplier": 10.0,
+            "pre_softmax_abs_delta_mean": float((scaled_logits - base_logits).abs().mean().item()),
+            "attention_abs_delta_mean": float((scaled_weights - base_weights).abs().mean().item()),
+            "attention_abs_delta_max": float((scaled_weights - base_weights).abs().max().item()),
+            "output_diff": summarize_tensor_difference(base_output, scaled_output),
+        },
+        "qk_zero": {
+            "qk_zeroed_in_memory": True,
+            "pre_softmax_max_abs": float(zero_logits.abs().max().item()),
+            "uniform_max_abs_error": float((zero_weights - uniform).abs().max().item()),
+            "output_diff": summarize_tensor_difference(base_output, zero_output),
+            "weights_restored": bool(
+                torch.equal(attention_module.q.weight.detach(), q_weight)
+                and torch.equal(attention_module.k.weight.detach(), k_weight)
+            ),
+        },
+        "all_model_parameters_unchanged": bool(
+            all(
+                torch.equal(parameter.detach().cpu(), parameter_snapshot[name])
+                for name, parameter in model.named_parameters()
+            )
+        ),
+        "checkpoint_retrained": False,
+    }
+    return results
+
+
+def _forward_attention_snapshot(
+    model: nn.Module,
+    attention_module: PulseAttentionOnlyTFE,
+    batch: np.ndarray,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """执行一次冻结推理并返回输出、注意力权重和预 softmax logits。"""
+    real = torch.from_numpy(batch[:, 0].astype(np.float32, copy=False)).to(device)
+    imag = torch.from_numpy(batch[:, 1].astype(np.float32, copy=False)).to(device)
+    with torch.no_grad():
+        output = model(torch.complex(real, imag))
+    if attention_module.last_attention_weights is None or attention_module.last_attention_logits is None:
+        raise RuntimeError("learned pulse attention 未产生权重或预 softmax logits。")
+    return (
+        output.detach(),
+        attention_module.last_attention_weights.detach().clone(),
+        attention_module.last_attention_logits.detach().clone(),
+    )
+
+
+def summarize_tensor_difference(first: torch.Tensor, second: torch.Tensor) -> dict[str, float]:
+    """汇总两个冻结推理输出的绝对差异和相对 RMS 差异。"""
+    difference = (first.detach().float() - second.detach().float()).abs()
+    denominator = first.detach().float().square().mean().sqrt() + 1e-12
+    return {
+        "mean_abs": float(difference.mean().item()),
+        "max_abs": float(difference.max().item()),
+        "relative_rms": float((difference.square().mean().sqrt() / denominator).item()),
+    }
+
+
+def print_frozen_attention_check_summary(results: dict[str, Any]) -> None:
+    """打印四项冻结 checkpoint 检查的最小摘要。"""
+    gradient = results["gradient_check"]
+    logit_stats = results["pre_softmax_logit_stats"]
+    scaled = results["logit_multiplier_10x"]
+    zero = results["qk_zero"]
+    print(
+        "冻结检查 | "
+        f"q_nonzero={gradient['q_weight']['nonzero_fraction']:.3f} "
+        f"k_nonzero={gradient['k_weight']['nonzero_fraction']:.3f} "
+        f"logit_std={logit_stats['logit_std']:.6f} "
+        f"logit_range_p95={logit_stats['row_range_p95']:.6f} "
+        f"10x_attn_delta={scaled['attention_abs_delta_mean']:.6f} "
+        f"zero_uniform_err={zero['uniform_max_abs_error']:.6e} "
+        f"params_unchanged={results['all_model_parameters_unchanged']}",
+        flush=True,
+    )
+
+
+def infer_temporal_audit_scores(
+    model: nn.Module,
+    x: np.ndarray,
+    batch_size: int,
+    device: torch.device,
+    capture_cells: bool,
+) -> dict[str, Any]:
+    """推理分数，并可选返回 TFE1 的逐 range-cell 诊断量。"""
+    if x.ndim != 4 or x.shape[1] != 2:
+        raise ValueError(f"SDRDSP X shape 应为 [B, 2, P, N]，实际为 {x.shape}。")
+    module = _get_pulse_attention_module(model)
+    score_parts: list[np.ndarray] = []
+    diagnostic_parts: dict[str, list[np.ndarray]] = {}
+    with torch.no_grad():
+        for start in range(0, len(x), batch_size):
+            batch = x[start : start + batch_size]
+            real = torch.from_numpy(batch[:, 0].astype(np.float32, copy=False)).to(device)
+            imag = torch.from_numpy(batch[:, 1].astype(np.float32, copy=False)).to(device)
+            logits = model(torch.complex(real, imag))
+            if logits.ndim != 3 or logits.shape[1] != 2:
+                raise ValueError(f"模型输出应为 [B, 2, N]，实际为 {tuple(logits.shape)}。")
+            score_parts.append((logits[:, 0, :] - logits[:, 1, :]).cpu().numpy().astype(np.float64))
+            if capture_cells:
+                if not module.last_cell_diagnostics:
+                    raise RuntimeError("pulse attention 未产生逐 cell 诊断量。")
+                for name, values in module.last_cell_diagnostics.items():
+                    diagnostic_parts.setdefault(name, []).append(
+                        values.cpu().numpy().astype(np.float64, copy=False)
+                    )
+    if not score_parts:
+        raise ValueError("SDRDSP 输入为空，无法推理时间注意力诊断。")
+    result: dict[str, Any] = {"scores": np.concatenate(score_parts, axis=0)}
+    if capture_cells:
+        result["cell_diagnostics"] = {
+            name: np.concatenate(parts, axis=0) for name, parts in diagnostic_parts.items()
+        }
+    return result
+
+
+def _empty_attention_group_values() -> dict[str, dict[str, list[np.ndarray]]]:
+    groups = ("target", "neighborhood_clutter", "remote_clutter", "all_clutter")
+    metrics = (
+        "attention_entropy",
+        "attention_max_weight",
+        "attention_diagonal_fraction",
+        "attention_residual_ratio",
+        "tfe_input_rms",
+        "tfe_enhanced_rms",
+    )
+    return {group: {metric: [] for metric in metrics} for group in groups}
+
+
+def summarize_attention_groups(
+    labels: np.ndarray,
+    cell_diagnostics: dict[str, np.ndarray],
+    neighborhood_radius: int,
+    remote_radius: int,
+) -> dict[str, dict[str, Any]]:
+    masks = attention_group_masks(labels, neighborhood_radius, remote_radius)
+    batch, ranges = labels.shape
+    expected_metrics = set(_empty_attention_group_values()["target"])
+    if set(cell_diagnostics) != expected_metrics:
+        raise ValueError(
+            f"逐 cell 诊断字段不完整: actual={sorted(cell_diagnostics)}, expected={sorted(expected_metrics)}。"
+        )
+    result: dict[str, dict[str, Any]] = {}
+    for group, mask in masks.items():
+        result[group] = {}
+        for metric, values in cell_diagnostics.items():
+            array = np.asarray(values, dtype=np.float64)
+            if array.shape != (batch, ranges):
+                raise ValueError(f"{metric} shape 应为 {(batch, ranges)}，实际为 {array.shape}。")
+            selected = array[mask]
+            result[group][metric] = summarize_numeric_values(selected)
+    return result
+
+
+def attention_group_masks(
+    labels: np.ndarray,
+    neighborhood_radius: int,
+    remote_radius: int,
+) -> dict[str, np.ndarray]:
+    if labels.ndim != 2 or not np.all(labels.sum(axis=1) == 1):
+        raise ValueError("严格 SDRDSP 测试标签必须每个窗口恰好包含一个目标 cell。")
+    ranges = labels.shape[1]
+    target_index = np.argmax(labels, axis=1)
+    distance = np.abs(np.arange(ranges)[None, :] - target_index[:, None])
+    target_mask = labels.astype(bool)
+    return {
+        "target": target_mask,
+        "neighborhood_clutter": (~target_mask) & (distance <= neighborhood_radius),
+        "remote_clutter": (~target_mask) & (distance >= remote_radius),
+        "all_clutter": ~target_mask,
+    }
+
+
+def summarize_numeric_values(values: np.ndarray) -> dict[str, Any]:
+    flat = np.asarray(values, dtype=np.float64).reshape(-1)
+    if flat.size == 0:
+        return {"count": 0, "mean": None, "std": None, "p05": None, "p50": None, "p95": None}
+    return {
+        "count": int(flat.size),
+        "mean": float(flat.mean()),
+        "std": float(flat.std()),
+        "p05": float(np.quantile(flat, 0.05)),
+        "p50": float(np.quantile(flat, 0.50)),
+        "p95": float(np.quantile(flat, 0.95)),
+    }
+
+
+def append_attention_group_values(
+    accumulator: dict[str, dict[str, list[np.ndarray]]],
+    labels: np.ndarray,
+    cell_diagnostics: dict[str, np.ndarray],
+    neighborhood_radius: int,
+    remote_radius: int,
+) -> None:
+    masks = attention_group_masks(labels, neighborhood_radius, remote_radius)
+    for group, mask in masks.items():
+        for metric, values in cell_diagnostics.items():
+            selected = np.asarray(values, dtype=np.float64)[mask]
+            if selected.size:
+                accumulator[group][metric].append(selected)
+
+
+def finalize_attention_group_values(
+    accumulator: dict[str, dict[str, list[np.ndarray]]],
+) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for group, metrics in accumulator.items():
+        result[group] = {}
+        for metric, values in metrics.items():
+            result[group][metric] = summarize_numeric_values(np.concatenate(values) if values else np.array([]))
+    return result
+
+
+def default_temporal_attention_audit_output_path() -> Path:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return Path("logs") / "training" / f"{stamp}_sdrdsp_temporal_attention_audit" / "diagnostics.json"
+
+
+def build_temporal_attention_report(results: dict[str, Any]) -> str:
+    lines = [
+        "# SDRDSP Pulse-attention 冻结 checkpoint 诊断",
+        "",
+        f"- 协议：`{results['dataset_protocol']}`",
+        f"- checkpoint：`{results['checkpoint']}`",
+        f"- 诊断入口：`{results['config']}`",
+        f"- attention shape：`{results['attention_shape_definition']}`",
+        f"- 阈值来源：`{results['threshold_source']}`",
+        "",
+        "## Pfa=0.001 反事实性能",
+        "",
+        "| 模式 | PD | PF | 低 SCR(-24~-20 dB)平均 PD |",
+        "|---|---:|---:|---:|",
+    ]
+    for mode, payload in results["modes"].items():
+        item = payload["performance"]["0.001"]
+        test = item["test"]
+        lines.append(
+            f"| {mode} | {test['PD']:.6f} | {test['PF']:.8f} | {item['low_scr_mean_PD']:.6f} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## 低 SCR 分层注意力统计",
+            "",
+            "下表为目标 cell、目标邻域（距离≤2 的非目标 cell）和远端杂波（距离≥8）在 -24/-22/-20 dB 合并后的均值。",
+            "",
+            "| 模式 | 分组 | entropy | max weight | diagonal | residual/input | input RMS | enhanced RMS |",
+            "|---|---|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for mode, payload in results["modes"].items():
+        groups = payload["low_scr_group_diagnostics"]
+        for group in ("target", "neighborhood_clutter", "remote_clutter"):
+            values = groups[group]
+            lines.append(
+                "| {mode} | {group} | {entropy:.6f} | {max_weight:.6f} | {diagonal:.6f} | "
+                "{residual:.6f} | {input_rms:.4f} | {enhanced_rms:.4f} |".format(
+                    mode=mode,
+                    group=group,
+                    entropy=values["attention_entropy"]["mean"] or 0.0,
+                    max_weight=values["attention_max_weight"]["mean"] or 0.0,
+                    diagonal=values["attention_diagonal_fraction"]["mean"] or 0.0,
+                    residual=values["attention_residual_ratio"]["mean"] or 0.0,
+                    input_rms=values["tfe_input_rms"]["mean"] or 0.0,
+                    enhanced_rms=values["tfe_enhanced_rms"]["mean"] or 0.0,
+                )
+            )
+    learned = results["modes"].get("learned", {}).get("performance", {}).get("0.001")
+    uniform = results["modes"].get("uniform", {}).get("performance", {}).get("0.001")
+    if learned and uniform:
+        pd_delta = learned["test"]["PD"] - uniform["test"]["PD"]
+        lines.extend(
+            [
+                "",
+                "## 初步判定",
+                "",
+                f"- learned 相对 uniform 的 Pfa=0.001 PD 差值：`{pd_delta:+.6f}`。",
+                "- 若该差值接近 0，收益更可能来自固定 pulse 混合/投影残差，而不能称为选择性 Q/K 注意力收益。",
+                "- identity 与 uniform 的差值用于区分跨 pulse 聚合和逐 pulse 投影残差；residual_off 用于确认残差路径是否是必要条件。",
+                "- 本诊断复用同一训练集分别校准各反事实模式的阈值，不重新训练，不构成多 seed 正式结论。",
+            ]
+        )
+    frozen = results.get("frozen_checkpoint_checks")
+    if frozen:
+        gradient = frozen["gradient_check"]
+        logit_stats = frozen["pre_softmax_logit_stats"]
+        scaled = frozen["logit_multiplier_10x"]
+        zero = frozen["qk_zero"]
+        lines.extend(
+            [
+                "",
+                "## 冻结 checkpoint 四项检查",
+                "",
+                f"- 梯度检查批次数：`{gradient['num_batches']}`；optimizer step：`{gradient['optimizer_step_called']}`。",
+                f"- Q/K 非零梯度比例：`{gradient['q_weight']['nonzero_fraction']:.6f}` / `{gradient['k_weight']['nonzero_fraction']:.6f}`。",
+                f"- 预 softmax logits std：`{logit_stats['logit_std']:.6f}`；行范围 P95：`{logit_stats['row_range_p95']:.6f}`。",
+                f"- logits×10 后 attention 平均绝对变化：`{scaled['attention_abs_delta_mean']:.6f}`；输出相对 RMS 变化：`{scaled['output_diff']['relative_rms']:.6f}`。",
+                f"- Q/K 置零后均匀权重最大误差：`{zero['uniform_max_abs_error']:.6e}`；参数恢复：`{zero['weights_restored']}`。",
+                f"- 全模型参数未改变：`{frozen['all_model_parameters_unchanged']}`；未重新训练：`{frozen['checkpoint_retrained']}`。",
+            ]
+        )
+    return "\n".join(lines) + "\n"
+
+
+def print_temporal_attention_summary(results: dict[str, Any]) -> None:
+    print("SDRDSP temporal attention audit summary", flush=True)
+    for mode, payload in results["modes"].items():
+        item = payload["performance"]["0.001"]
+        test = item["test"]
+        low = item["low_scr_mean_PD"]
+        print(
+            f"{mode:>12} | PD={test['PD']:.6f} | PF={test['PF']:.8f} | low_scr_PD={low:.6f}",
+            flush=True,
+        )
+    print("分层统计已写入 summary.md；其中 attention 统计按目标/邻域/远端杂波分组。", flush=True)
 
 
 def run_sdrdsp_probes(

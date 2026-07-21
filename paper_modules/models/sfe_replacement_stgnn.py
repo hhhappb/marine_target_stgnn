@@ -24,20 +24,27 @@ class SFEReplacementSTGNN(nn.Module):
         feature_cfg = config.get("radar_features", {})
         spatial_cfg = config.get("spatial_graph", {})
         temporal_cfg = config.get("temporal", {})
+        temporal1_override = config.get("temporal1", {})
+        temporal2_override = config.get("temporal2", {})
         gate_cfg = config.get("clutter_gate", {})
         head_cfg = config.get("detection_head", {})
 
         if bool(gate_cfg.get("enabled", False)):
             raise ValueError("论文主干替换实验当前不支持同时开启 clutter_gate。")
+        if not isinstance(temporal_cfg, dict) or not isinstance(temporal1_override, dict) or not isinstance(temporal2_override, dict):
+            raise ValueError("temporal、temporal1、temporal2 配置必须是 mapping。")
+
+        temporal1_cfg = {**temporal_cfg, **temporal1_override}
+        temporal2_cfg = {**temporal_cfg, **temporal2_override}
 
         self.pulses = int(model_cfg.get("pulses", 4))
         self.range_cells = int(model_cfg.get("range_cells", 14))
 
         feature_channels = int(feature_cfg.get("out_channels", 64))
         spatial1_channels = int(spatial_cfg.get("stage1_out_channels", 128))
-        temporal1_channels = int(temporal_cfg.get("stage1_out_channels", 256))
+        temporal1_channels = int(temporal1_cfg.get("stage1_out_channels", 256))
         spatial2_channels = int(spatial_cfg.get("stage2_out_channels", 512))
-        temporal2_channels = int(temporal_cfg.get("stage2_out_channels", temporal_cfg.get("out_channels", 1024)))
+        temporal2_channels = int(temporal2_cfg.get("stage2_out_channels", temporal2_cfg.get("out_channels", 1024)))
 
         self.radar_features = RadarFeatureEncoder(
             feature_type=str(feature_cfg.get("type", "real_imag")),
@@ -45,9 +52,9 @@ class SFEReplacementSTGNN(nn.Module):
             out_channels=feature_channels,
         )
         self.spatial_graph1 = self._build_spatial_graph(spatial_cfg, feature_channels, spatial1_channels)
-        self.tfe1 = TemporalModule(temporal_cfg, spatial1_channels, temporal1_channels)
+        self.tfe1 = TemporalModule(temporal1_cfg, spatial1_channels, temporal1_channels)
         self.spatial_graph2 = self._build_spatial_graph(spatial_cfg, temporal1_channels, spatial2_channels)
-        self.tfe2 = TemporalModule(temporal_cfg, spatial2_channels, temporal2_channels)
+        self.tfe2 = TemporalModule(temporal2_cfg, spatial2_channels, temporal2_channels)
         self.detection_head = DetectionHead(
             in_channels=temporal2_channels,
             hidden_channels=int(head_cfg.get("hidden_channels", 512)),
@@ -99,3 +106,11 @@ class SFEReplacementSTGNN(nn.Module):
                 "temporal2": temporal2,
             }
         return logits
+
+    def get_temporal_diagnostics(self) -> dict[str, float]:
+        """汇总 TFE1/TFE2 最近一个 batch 的可记录诊断量。"""
+        diagnostics: dict[str, float] = {}
+        for stage, module in (("tfe1", self.tfe1), ("tfe2", self.tfe2)):
+            for name, value in module.get_diagnostics().items():
+                diagnostics[f"{stage}_{name}"] = float(value)
+        return diagnostics
