@@ -84,3 +84,17 @@
 5. 除本计划和受保护历史资产外，检查旧模块文件名/导入路径引用为 0。
 6. 使用 `git rm` 删除 D3，并独立提交。
 7. 运行时间模块单测、整模型 `[B,4,14] complex -> [B,2,14]` 接口检查和 P=4 smoke。
+
+## 执行记录
+
+- 机械迁移提交：`721eaeb refactor(tfe): rename corrected diff module`。
+- 时间模块单测：`6 passed`。
+- 整模型接口：`complex [2,4,14] -> float [2,2,14]`。
+- 已删除以下 6 个明确授权、未被 Git 跟踪且无调用方的配置；它们无法通过 Git 恢复：
+  - `work/stage1_screen_sdrdsp_p16/spatial_temporal.yaml`
+  - `work/stage1_screen_sdrdsp_p16/temporal_only.yaml`
+  - `work/stage1_screen_sdrdsp/spatial_temporal.yaml`
+  - `work/stage1_screen_sdrdsp/temporal_only.yaml`
+  - `work/stage1_smoke_sdrdsp/spatial_temporal.yaml`
+  - `work/stage1_smoke_sdrdsp/temporal_only.yaml`
+- 其余删除目标因 `reports/` 或 `share/` 中仍存在逐路径历史引用，按删除 SOP 暂停。
