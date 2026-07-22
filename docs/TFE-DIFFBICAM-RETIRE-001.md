@@ -97,4 +97,7 @@
   - `work/stage1_screen_sdrdsp/temporal_only.yaml`
   - `work/stage1_smoke_sdrdsp/spatial_temporal.yaml`
   - `work/stage1_smoke_sdrdsp/temporal_only.yaml`
-- 其余删除目标因 `reports/` 或 `share/` 中仍存在逐路径历史引用，按删除 SOP 暂停。
+- 已从 `work/ipix_hardpoint_five_arm/suite.yaml` 移除两个退役时间分支，suite 名称同步改为 three-arm；随后删除以下 2 个已归零引用的未跟踪配置：
+  - `work/ipix_hardpoint_five_arm/spatial_temporal.yaml`
+  - `work/ipix_hardpoint_five_arm/temporal_only.yaml`
+- 其余 12 个未跟踪删除目标及全部 tracked 删除目标因 `reports/` 或 `share/` 中仍存在逐路径历史引用，按删除 SOP 暂停。
