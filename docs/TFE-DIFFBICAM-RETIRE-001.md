@@ -116,3 +116,10 @@
   - `work/n_scale_sdrdsp/n512_spatial_temporal.yaml`
   - `work/n_scale_sdrdsp/n512_temporal_only.yaml`
 - 至此，计划列出的 20 个未跟踪配置已全部删除；这些文件无法通过 Git 恢复，历史副本仍保存在受保护 `share/` 或运行记录中。
+- tracked 删除提交：
+  - `72f3377`：D1，删除 3 个退役 suite。
+  - `74ef8cc`：D2，删除 19 个退役配置。
+  - `fecf084`：D3，删除旧 `diff_bicam_tfe.py` 源码。
+- 最终审计：23 个 tracked 删除目标剩余 0，20 个未跟踪删除目标剩余 0；保护路径外旧文件名、类名、registry 类型引用为 0。
+- 最终验证：时间模块单测 `6 passed`；整模型接口 `complex [2,4,14] -> float [2,2,14]`；此前 P=4 smoke 已完成。
+- `logs/training/`、`reports/`、`share/` 保持为受保护历史资产，未执行删除、移动、重命名或覆盖。
