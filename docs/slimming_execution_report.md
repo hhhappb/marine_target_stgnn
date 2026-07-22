@@ -84,14 +84,13 @@ T4 未执行 history rewrite，因此没有瘦身前后对比结果。
 - `paper_modules/configs/real_imag_tfe_replacement_diff_bicam.yaml`：研究配置，按文件名单独 `git add`。
 - `paper_modules/configs/real_imag_tfe_replacement_diff_bicam_p16.yaml`：研究配置，按文件名单独 `git add`。
 - `paper_modules/configs/real_imag_tfe_replacement_diff_bicam_p32.yaml`：研究配置，按文件名单独 `git add`。
-- `paper_modules/configs/sfe_tfe_replacement_radar_diffbic.yaml`：研究配置，按文件名单独 `git add`。
-- `paper_modules/configs/sfe_tfe_replacement_radar_diffbic_train_only_stats.yaml`：研究配置，按文件名单独 `git add`。
+- 旧 DiffBiCAM 研究配置已按 `TFE-DIFFBICAM-RETIRE-001` 从当前主线退役。
 
 ### 补交到 Git 的模块源码
 
 - `paper_modules/models/modules/temporal.py`：模型模块源码，按文件名单独 `git add`。
 - `paper_modules/models/modules/temporal_modules/__init__.py`：模型模块源码，按文件名单独 `git add`。
-- `paper_modules/models/modules/temporal_modules/diff_bicam_tfe.py`：模型模块源码，按文件名单独 `git add`。
+- 旧 DiffBiCAM 模块源码已按 `TFE-DIFFBICAM-RETIRE-001` 从当前主线退役。
 - `paper_modules/models/modules/temporal_modules/stgnn_tfe.py`：模型模块源码，按文件名单独 `git add`。
 
 ### 补交到 Git 的实验记录

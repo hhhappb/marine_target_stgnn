@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import torch.nn as nn
 
-from .corrected_diff_tfe import CorrectedDiffOnlyTFE
-from .diff_bicam_tfe import DiffBiCAMTFE
+from .diff_tfe import DiffTFE
 from .fixed_uniform_tfe import FixedUniformTemporalMixerTFE
 from .lag_aware_anti_alias_tfe import LagAwareAntiAliasTFE
 from .pulse_attention_tfe import PulseAttentionOnlyTFE
@@ -14,20 +13,8 @@ def build_temporal_module(config: dict[str, object], in_channels: int, out_chann
     temporal_type = str(config.get("type", "stgnn_tfe"))
     if temporal_type == "stgnn_tfe":
         return STGNNTemporalGate(in_channels, out_channels)
-    if temporal_type == "diff_bicam_tfe":
-        return DiffBiCAMTFE(
-            in_channels,
-            out_channels,
-            num_heads=int(config.get("num_heads", 4)),
-            dropout=float(config.get("dropout", 0.1)),
-            use_diff=bool(config.get("use_diff", True)),
-            use_coattention=bool(config.get("use_coattention", True)),
-            use_prev=bool(config.get("use_prev", True)),
-            use_next=bool(config.get("use_next", True)),
-            shuffle_diff=bool(config.get("shuffle_diff", False)),
-        )
-    if temporal_type == "corrected_diff_only_tfe":
-        return CorrectedDiffOnlyTFE(
+    if temporal_type == "diff_tfe":
+        return DiffTFE(
             in_channels,
             out_channels,
             diff_scale=float(config.get("diff_scale", 0.1)),
@@ -66,8 +53,7 @@ def build_temporal_module(config: dict[str, object], in_channels: int, out_chann
 
 __all__ = [
     "build_temporal_module",
-    "CorrectedDiffOnlyTFE",
-    "DiffBiCAMTFE",
+    "DiffTFE",
     "FixedUniformTemporalMixerTFE",
     "LagAwareAntiAliasTFE",
     "PulseAttentionOnlyTFE",

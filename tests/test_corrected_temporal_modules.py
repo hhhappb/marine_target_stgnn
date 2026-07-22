@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from paper_modules.models.modules.temporal_modules import (
-    CorrectedDiffOnlyTFE,
+    DiffTFE,
     FixedUniformTemporalMixerTFE,
     PulseAttentionOnlyTFE,
     STGNNTemporalGate,
@@ -61,7 +61,7 @@ def test_fixed_uniform_mixer_has_uniform_cell_diagnostics_and_shape() -> None:
 def test_corrected_diff_zero_enhancement_matches_original_gate() -> None:
     torch.manual_seed(42)
     original = STGNNTemporalGate(8, 12)
-    corrected = CorrectedDiffOnlyTFE(8, 12, use_diff=False)
+    corrected = DiffTFE(8, 12, use_diff=False)
     corrected.update.load_state_dict(copy.deepcopy(original.update.state_dict()))
     corrected.output.load_state_dict(copy.deepcopy(original.output.state_dict()))
     x = torch.randn(2, 8, 4, 256)
@@ -69,7 +69,7 @@ def test_corrected_diff_zero_enhancement_matches_original_gate() -> None:
 
 
 def test_public_model_types_and_fail_loud_checks() -> None:
-    assert isinstance(build_temporal_module({"type": "corrected_diff_only_tfe"}, 8, 12), CorrectedDiffOnlyTFE)
+    assert isinstance(build_temporal_module({"type": "diff_tfe"}, 8, 12), DiffTFE)
     assert isinstance(
         build_temporal_module({"type": "pulse_attention_only_tfe", "attention_dim": 8}, 8, 12),
         PulseAttentionOnlyTFE,
@@ -77,7 +77,9 @@ def test_public_model_types_and_fail_loud_checks() -> None:
     assert isinstance(build_temporal_module({"type": "fixed_uniform_tfe"}, 8, 12), FixedUniformTemporalMixerTFE)
     with pytest.raises(ValueError, match="Unknown temporal module type"):
         build_temporal_module({"type": "not_a_temporal_module"}, 8, 12)
+    with pytest.raises(ValueError, match="Unknown temporal module type"):
+        build_temporal_module({"type": "diff_bicam_tfe"}, 8, 12)
     with pytest.raises(ValueError, match="P>=2"):
-        CorrectedDiffOnlyTFE(8, 12)(torch.randn(1, 8, 1, 256))
+        DiffTFE(8, 12)(torch.randn(1, 8, 1, 256))
     with pytest.raises(ValueError, match="P>=2"):
         PulseAttentionOnlyTFE(8, 12, attention_dim=8)(torch.randn(1, 8, 1, 256))

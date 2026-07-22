@@ -42,21 +42,3 @@ IPIX module smoke:
 .\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --configs paper_modules\configs\repro_original_stgnn_sdrdsp_strict256_v2.yaml --seeds 42 --epochs 2 --target-pfa 0.001 --name sdrdsp_v2_full_smoke --stop-on-failure
 ```
 
-IPIX Fig.7 hard-point per-file protocol check:
-
-```powershell
-.\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --suite paper_modules\configs\suites\per_file_fig7_hardpoints_b.yaml
-```
-
-Validate the hard-point configs before launching runs:
-
-```powershell
-.\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --suite paper_modules\configs\suites\per_file_fig7_hardpoints_b.yaml --validate-only
-```
-
-IPIX Fig.7 hard-point per-file run with train-time range-roll augmentation:
-
-```powershell
-.\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --suite paper_modules\configs\suites\per_file_fig7_hardpoints_shift_aug_b.yaml --validate-only
-.\.venv\Scripts\python.exe paper_modules\experiments\auto_experiment.py --suite paper_modules\configs\suites\per_file_fig7_hardpoints_shift_aug_b.yaml
-```

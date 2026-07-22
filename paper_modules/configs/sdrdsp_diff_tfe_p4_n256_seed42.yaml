@@ -1,6 +1,6 @@
 paths:
   data_dir: data/sdrdsp_strict_256_v2
-  save_dir: logs/training/sdrdsp_corrected_diff_only_n256_seed42
+  save_dir: logs/training/sdrdsp_diff_tfe_p4_n256_seed42
 
 dataset:
   type: scr_npz
@@ -30,7 +30,7 @@ temporal:
   out_channels: 1024
 
 temporal1:
-  type: corrected_diff_only_tfe
+  type: diff_tfe
   stage1_out_channels: 256
   diff_scale: 0.1
   use_diff: true

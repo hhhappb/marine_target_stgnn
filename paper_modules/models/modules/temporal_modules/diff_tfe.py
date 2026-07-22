@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 
 
-class CorrectedDiffOnlyTFE(nn.Module):
+class DiffTFE(nn.Module):
     """只加入归一化慢时间差分残差的 TFE。
 
     输入输出契约：输入 `[B,C,P,N]`，输出 `[B,C_out,ceil(P/2),N]`。
@@ -25,9 +25,9 @@ class CorrectedDiffOnlyTFE(nn.Module):
         self.diff_scale = float(diff_scale)
         self.use_diff = bool(use_diff)
         if self.in_channels <= 0 or self.out_channels <= 0:
-            raise ValueError("CorrectedDiffOnlyTFE 的通道数必须为正整数。")
+            raise ValueError("DiffTFE 的通道数必须为正整数。")
         if self.diff_scale < 0:
-            raise ValueError("CorrectedDiffOnlyTFE 的 diff_scale 不能为负数。")
+            raise ValueError("DiffTFE 的 diff_scale 不能为负数。")
 
         # 这两个卷积与原 ST-GNN TFE 保持同样的参数形状和门控语义。
         self.update = nn.Conv2d(
@@ -52,13 +52,13 @@ class CorrectedDiffOnlyTFE(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.dim() != 4:
-            raise ValueError(f"CorrectedDiffOnlyTFE 期望输入 [B,C,P,N]，实际为 {tuple(x.shape)}。")
+            raise ValueError(f"DiffTFE 期望输入 [B,C,P,N]，实际为 {tuple(x.shape)}。")
         if x.size(1) != self.in_channels:
             raise ValueError(
-                f"CorrectedDiffOnlyTFE 通道数不匹配：期望 {self.in_channels}，实际 {x.size(1)}。"
+                f"DiffTFE 通道数不匹配：期望 {self.in_channels}，实际 {x.size(1)}。"
             )
         if x.size(2) < 2:
-            raise ValueError("CorrectedDiffOnlyTFE 至少需要 P>=2 才能计算慢时间差分。")
+            raise ValueError("DiffTFE 至少需要 P>=2 才能计算慢时间差分。")
 
         enhanced = x
         if self.use_diff and self.diff_scale != 0.0:
