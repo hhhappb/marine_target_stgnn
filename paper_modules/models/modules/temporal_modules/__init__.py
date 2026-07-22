@@ -6,6 +6,7 @@ from .diff_tfe import DiffTFE
 from .fixed_uniform_tfe import FixedUniformTemporalMixerTFE
 from .lag_aware_anti_alias_tfe import LagAwareAntiAliasTFE
 from .pulse_attention_tfe import PulseAttentionOnlyTFE
+from .scale_normalized_difference_decomposition_tfe import ScaleNormalizedDifferenceDecompositionTFE
 from .stgnn_tfe import STGNNTemporalGate
 
 
@@ -48,6 +49,15 @@ def build_temporal_module(config: dict[str, object], in_channels: int, out_chann
             use_filter=bool(config.get("use_filter", True)),
             padding_mode=str(config.get("padding_mode", "replicate")),
         )
+    if temporal_type == "scale_normalized_difference_decomposition_tfe":
+        return ScaleNormalizedDifferenceDecompositionTFE(
+            in_channels,
+            out_channels,
+            beta_max=float(config.get("beta_max", 0.1)),
+            eps=float(config.get("eps", 1e-6)),
+            use_modulation=bool(config.get("use_modulation", True)),
+            collect_diagnostics=bool(config.get("collect_diagnostics", False)),
+        )
     raise ValueError(f"Unknown temporal module type: {temporal_type}")
 
 
@@ -57,5 +67,6 @@ __all__ = [
     "FixedUniformTemporalMixerTFE",
     "LagAwareAntiAliasTFE",
     "PulseAttentionOnlyTFE",
+    "ScaleNormalizedDifferenceDecompositionTFE",
     "STGNNTemporalGate",
 ]
