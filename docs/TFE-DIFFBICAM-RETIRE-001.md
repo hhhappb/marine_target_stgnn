@@ -74,6 +74,7 @@
   重命名为 `paper_modules/configs/sdrdsp_diff_tfe_p4_n256_seed42.yaml`。
 - 更新 `tests/test_corrected_temporal_modules.py` 的类名和 registry 断言。
 - 从 `README.md`、`paper_modules/README.md` 删除已失效 suite 的命令和入口说明。
+- 从 `docs/slimming_execution_report.md` 移除指向当前树中退役 DiffBiCAM 配置/源码的可执行路径引用，历史结论保持不变。
 
 ## 删除与验证顺序
 

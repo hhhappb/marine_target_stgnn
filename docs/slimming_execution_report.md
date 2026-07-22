@@ -81,9 +81,7 @@ T4 未执行 history rewrite，因此没有瘦身前后对比结果。
 
 ### 补交到 Git 的研究配置
 
-- `paper_modules/configs/real_imag_tfe_replacement_diff_bicam.yaml`：研究配置，按文件名单独 `git add`。
-- `paper_modules/configs/real_imag_tfe_replacement_diff_bicam_p16.yaml`：研究配置，按文件名单独 `git add`。
-- `paper_modules/configs/real_imag_tfe_replacement_diff_bicam_p32.yaml`：研究配置，按文件名单独 `git add`。
+- 旧 DiffBiCAM standalone 研究配置已按 `TFE-DIFFBICAM-RETIRE-001` 从当前主线退役。
 - 旧 DiffBiCAM 研究配置已按 `TFE-DIFFBICAM-RETIRE-001` 从当前主线退役。
 
 ### 补交到 Git 的模块源码
