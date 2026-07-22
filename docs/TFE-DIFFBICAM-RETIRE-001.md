@@ -90,6 +90,7 @@
 - 机械迁移提交：`721eaeb refactor(tfe): rename corrected diff module`。
 - 时间模块单测：`6 passed`。
 - 整模型接口：`complex [2,4,14] -> float [2,2,14]`。
+- P=4 SDRDSP smoke：1 epoch、64 个训练窗口、20×5 个测试窗口运行完成，训练/评估/诊断链路无异常；该小样本结果仅作可运行性验证，不作性能结论。
 - 已删除以下 6 个明确授权、未被 Git 跟踪且无调用方的配置；它们无法通过 Git 恢复：
   - `work/stage1_screen_sdrdsp_p16/spatial_temporal.yaml`
   - `work/stage1_screen_sdrdsp_p16/temporal_only.yaml`
