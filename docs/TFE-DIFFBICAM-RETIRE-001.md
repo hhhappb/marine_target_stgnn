@@ -102,4 +102,17 @@
 - 已从 `work/ipix_hardpoint_five_arm/suite.yaml` 移除两个退役时间分支，suite 名称同步改为 three-arm；随后删除以下 2 个已归零引用的未跟踪配置：
   - `work/ipix_hardpoint_five_arm/spatial_temporal.yaml`
   - `work/ipix_hardpoint_five_arm/temporal_only.yaml`
-- 其余 12 个未跟踪删除目标及全部 tracked 删除目标因 `reports/` 或 `share/` 中仍存在逐路径历史引用，按删除 SOP 暂停。
+- 人工授权更新删除规则后，`reports/`、`share/`、`logs/training/` 中的历史审计引用按规则保留、不计入当前运行时引用。完成活动引用归零后，删除剩余 12 个未跟踪目标：
+  - `paper_modules/configs/suites/per_file_fig7_fullstats_b.yaml`
+  - `paper_modules/configs/per_file_fig7_fullstats/sfe_tfe_radar_diffbic_label01_vv.yaml`
+  - `paper_modules/configs/per_file_fig7_fullstats/sfe_tfe_radar_diffbic_label03_vv.yaml`
+  - `paper_modules/configs/per_file_fig7_fullstats/sfe_tfe_radar_diffbic_label06_hh.yaml`
+  - `paper_modules/configs/per_file_fig7_fullstats/sfe_tfe_radar_diffbic_label06_hv.yaml`
+  - `paper_modules/configs/per_file_fig7_fullstats/sfe_tfe_radar_diffbic_label06_vh.yaml`
+  - `paper_modules/configs/per_file_fig7_fullstats/sfe_tfe_radar_diffbic_label06_vv.yaml`
+  - `paper_modules/configs/per_file_fig7_fullstats/sfe_tfe_radar_diffbic_label12_vv.yaml`
+  - `work/n_scale_sdrdsp/n128_spatial_temporal.yaml`
+  - `work/n_scale_sdrdsp/n128_temporal_only.yaml`
+  - `work/n_scale_sdrdsp/n512_spatial_temporal.yaml`
+  - `work/n_scale_sdrdsp/n512_temporal_only.yaml`
+- 至此，计划列出的 20 个未跟踪配置已全部删除；这些文件无法通过 Git 恢复，历史副本仍保存在受保护 `share/` 或运行记录中。
