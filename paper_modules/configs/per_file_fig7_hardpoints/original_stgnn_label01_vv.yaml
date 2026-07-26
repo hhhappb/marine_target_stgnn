@@ -18,11 +18,16 @@ model:
 
 loss:
   type: cross_entropy
+  use_class_weights: false
 
 train:
   epochs: 50
-  batch_size: 512
+  batch_size: 32
   learning_rate: 0.001
+  optimizer: adam
+  weight_decay: 0.0
+  scheduler: none
+  grad_clip: null
   num_workers: 0
   seed: 42
 

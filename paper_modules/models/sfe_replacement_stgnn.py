@@ -114,3 +114,11 @@ class SFEReplacementSTGNN(nn.Module):
             for name, value in module.get_diagnostics().items():
                 diagnostics[f"{stage}_{name}"] = float(value)
         return diagnostics
+
+    def get_temporal_training_diagnostics(self) -> dict[str, float]:
+        """汇总 TFE1/TFE2 在反向传播后的参数和梯度诊断量。"""
+        diagnostics: dict[str, float] = {}
+        for stage, module in (("tfe1", self.tfe1), ("tfe2", self.tfe2)):
+            for name, value in module.get_training_diagnostics().items():
+                diagnostics[f"{stage}_{name}"] = float(value)
+        return diagnostics

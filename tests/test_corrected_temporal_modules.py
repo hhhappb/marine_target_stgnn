@@ -152,6 +152,8 @@ def test_scale_normalized_difference_identity_control_keeps_parameters_and_commo
     original.output.load_state_dict(copy.deepcopy(identity.output.state_dict()))
     assert torch.equal(identity_output, original(x))
     assert not torch.equal(active(x), identity_output)
+    assert identity.last_diagnostics == {}
+    assert identity.get_training_diagnostics() == {}
 
 
 def test_scale_normalized_difference_bounds_gradients_and_optional_diagnostics() -> None:
@@ -177,7 +179,14 @@ def test_scale_normalized_difference_bounds_gradients_and_optional_diagnostics()
     )
     diagnostic_module(torch.randn(2, 8, 8, 14))
     assert "difference_trend_rms" in diagnostic_module.last_diagnostics
+    assert "difference_modulation_mean" in diagnostic_module.last_diagnostics
+    assert "difference_modulation_saturation_ratio" in diagnostic_module.last_diagnostics
     assert diagnostic_module.last_cell_diagnostics["trend_rms"].shape == (2, 14)
+
+    diagnostic_module(torch.randn(2, 8, 8, 14)).sum().backward()
+    training_diagnostics = diagnostic_module.get_training_diagnostics()
+    assert training_diagnostics["difference_evidence_projection_gradient_present"] == 1.0
+    assert training_diagnostics["difference_evidence_projection_gradient_norm"] > 0.0
 
 
 @pytest.mark.parametrize(

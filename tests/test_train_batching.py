@@ -7,6 +7,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from paper_modules.experiments.train import train_one_epoch
+from paper_modules.losses.cross_entropy import CrossEntropyDetectionLoss
 
 
 class TinyComplexDetector(nn.Module):
@@ -22,6 +23,10 @@ class TinyComplexDetector(nn.Module):
 class DiagnosticTinyComplexDetector(TinyComplexDetector):
     def get_temporal_diagnostics(self) -> dict[str, float]:
         return {"marker": 1.0}
+
+    def get_temporal_training_diagnostics(self) -> dict[str, float]:
+        gradient = self.scale.grad
+        return {"scale_gradient": float(gradient.abs().item()) if gradient is not None else 0.0}
 
 
 def make_dataset() -> TensorDataset:
@@ -145,3 +150,13 @@ def test_temporal_diagnostics_are_opt_in() -> None:
         collect_temporal_diagnostics=True,
     )
     assert enabled_metrics["diagnostic_marker"] == 1.0
+    assert enabled_metrics["diagnostic_scale_gradient"] > 0.0
+
+
+def test_flattened_detection_cross_entropy_matches_original_definition() -> None:
+    torch.manual_seed(42)
+    logits = torch.randn(3, 2, 7, requires_grad=True)
+    labels = torch.randint(0, 2, (3, 7))
+    expected = nn.CrossEntropyLoss()(logits, labels)
+    actual = CrossEntropyDetectionLoss()(logits, labels)
+    torch.testing.assert_close(actual, expected)

@@ -18,3 +18,8 @@ class TemporalModule(nn.Module):
     def get_diagnostics(self) -> dict[str, float]:
         """返回最近一个 batch 的时间模块诊断量。"""
         return dict(getattr(self.impl, "last_diagnostics", {}))
+
+    def get_training_diagnostics(self) -> dict[str, float]:
+        """返回反向传播后才可获得的时间模块训练诊断量。"""
+        getter = getattr(self.impl, "get_training_diagnostics", None)
+        return dict(getter()) if callable(getter) else {}

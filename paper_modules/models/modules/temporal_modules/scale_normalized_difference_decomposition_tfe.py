@@ -93,18 +93,6 @@ class ScaleNormalizedDifferenceDecompositionTFE(nn.Module):
                 self._record_diagnostics(x, enhanced, trend, curvature, normalized_curvature, modulation)
         else:
             enhanced = x
-            if self.collect_diagnostics:
-                with torch.no_grad(), torch.autocast(device_type=x.device.type, enabled=False):
-                    trend, curvature, normalized_curvature = self._build_evidence(x)
-                    modulation = torch.zeros_like(x, dtype=torch.float32)
-                    self._record_diagnostics(
-                        x,
-                        enhanced,
-                        trend,
-                        curvature,
-                        normalized_curvature,
-                        modulation,
-                    )
 
         return torch.sigmoid(self.update(enhanced)) * torch.tanh(self.output(enhanced))
 
@@ -179,7 +167,11 @@ class ScaleNormalizedDifferenceDecompositionTFE(nn.Module):
                 (normalized_curvature_rms / (trend_rms + self.eps)).item()
             ),
             "difference_modulation_rms": float(modulation_value.square().mean().sqrt().item()),
+            "difference_modulation_mean": float(modulation_value.mean().item()),
             "difference_modulation_abs_max": float(modulation_value.abs().max().item()),
+            "difference_modulation_saturation_ratio": float(
+                (modulation_value.abs() >= 0.9 * self.beta_max).float().mean().item()
+            ),
             "difference_enhanced_input_rms_ratio": float(
                 (enhanced_rms / (input_rms + self.eps)).item()
             ),
@@ -194,4 +186,22 @@ class ScaleNormalizedDifferenceDecompositionTFE(nn.Module):
             "curvature_rms_after_scaling": normalized_curvature_value.square().mean(dim=reduce_dims).sqrt(),
             "modulation_rms": modulation_value.square().mean(dim=reduce_dims).sqrt(),
             "enhanced_input_rms_ratio": enhanced_cell_rms / (input_cell_rms + self.eps),
+        }
+
+    def get_training_diagnostics(self) -> dict[str, float]:
+        """返回 evidence 投影在当前反向传播后的参数和梯度范数。"""
+        if not self.use_modulation:
+            return {}
+        weight_squared = 0.0
+        gradient_squared = 0.0
+        gradient_present = False
+        for parameter in self.evidence_proj.parameters():
+            weight_squared += float(parameter.detach().float().square().sum().item())
+            if parameter.grad is not None:
+                gradient_present = True
+                gradient_squared += float(parameter.grad.detach().float().square().sum().item())
+        return {
+            "difference_evidence_projection_weight_norm": weight_squared**0.5,
+            "difference_evidence_projection_gradient_norm": gradient_squared**0.5,
+            "difference_evidence_projection_gradient_present": float(gradient_present),
         }

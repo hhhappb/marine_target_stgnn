@@ -80,6 +80,8 @@ def train_one_epoch(
             window_start = ((batch_idx - 1) // gradient_accumulation_steps) * gradient_accumulation_steps + 1
             window_size = min(gradient_accumulation_steps, len(loader) - window_start + 1)
             (loss / window_size).backward()
+            if collect_temporal_diagnostics and hasattr(model, "get_temporal_training_diagnostics"):
+                diagnostics.append(model.get_temporal_training_diagnostics())
             should_step = batch_idx % gradient_accumulation_steps == 0 or batch_idx == len(loader)
             if should_step:
                 gradient_norms.append(_gradient_norm(model))
@@ -524,6 +526,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-train-windows", type=int, default=None)
     parser.add_argument("--max-test-windows-per-file", type=int, default=None)
     parser.add_argument("--checkpoint", type=Path, default=None)
+    parser.add_argument("--save-dir", type=Path, default=None)
+    parser.add_argument("--deterministic", action="store_true")
     parser.add_argument("--eval-only", action="store_true")
     parser.add_argument("--no-progress", action="store_true")
     parser.add_argument("--log-interval", type=int, default=0)
@@ -533,6 +537,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
+    if args.save_dir is not None:
+        config.setdefault("paths", {})["save_dir"] = str(args.save_dir)
+    if args.deterministic:
+        config.setdefault("train", {})["deterministic"] = True
     if args.epochs is not None:
         config["train"]["epochs"] = args.epochs
     if args.batch_size is not None:
@@ -544,6 +552,13 @@ def main() -> None:
         raise ValueError(f"train.gradient_accumulation_steps 必须为正整数，实际为 {accumulation_steps}。")
     if args.auto_batch_probe and args.eval_only:
         raise ValueError("--auto-batch-probe 与 --eval-only 不能同时使用。")
+
+    deterministic = bool(config.get("train", {}).get("deterministic", False))
+    if deterministic:
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+        torch.use_deterministic_algorithms(True)
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
 
     seed = int(get_config_value(config, "train.seed"))
     seed_everything(seed)
@@ -745,6 +760,13 @@ def main() -> None:
             checkpoint_path=checkpoint_path,
         )
     )
+    results["max_train_windows"] = args.max_train_windows
+    results["actual_train_windows"] = len(train_dataset) if not args.eval_only else None
+    results["total_optimizer_steps"] = int(
+        sum(float(item.get("optimizer_steps", 0.0)) for item in training_history)
+    )
+    results["checkpoint_selection"] = "minimum_training_loss"
+    results["deterministic_training"] = deterministic
     results["training_history"] = training_history
     if temporal_diagnostics_enabled and hasattr(model, "get_temporal_diagnostics"):
         results["final_temporal_diagnostics"] = model.get_temporal_diagnostics()
@@ -813,6 +835,7 @@ def run_metadata(
         "optimizer": config.get("train", {}).get("optimizer", "adamw"),
         "scheduler": config.get("train", {}).get("scheduler", "cosine"),
         "grad_clip": config.get("train", {}).get("grad_clip", 1.0),
+        "deterministic_training": bool(config.get("train", {}).get("deterministic", False)),
         "gradient_accumulation_steps": int(config.get("train", {}).get("gradient_accumulation_steps", 1)),
         "nominal_effective_batch_size": int(config.get("train", {}).get("batch_size", 0))
         * int(config.get("train", {}).get("gradient_accumulation_steps", 1)),
