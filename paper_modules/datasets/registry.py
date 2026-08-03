@@ -26,7 +26,13 @@ def build_dataset(config: dict[str, Any], split: str, **overrides: Any):
             raise ValueError(f"没有找到 IPIX {split} 文件：data_dir={data_dir}, sources={sources}, polarizations={pols}")
         augment_cfg = dataset_cfg.get("augment", {}) if split == "train" else {}
         range_roll = augment_cfg.get("range_roll") if isinstance(augment_cfg, dict) else None
-        return IpixWindowDataset(files, max_windows=max_windows, seed=seed, range_roll=range_roll)
+        return IpixWindowDataset(
+            files,
+            max_windows=max_windows,
+            seed=seed,
+            range_roll=range_roll,
+            expected_processing_mode=dataset_cfg.get("expected_processing_mode"),
+        )
 
     if dataset_type == "scr_npz":
         data_dir = Path(dataset_cfg.get("data_dir", config.get("paths", {}).get("data_dir", "")))

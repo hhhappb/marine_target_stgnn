@@ -34,8 +34,22 @@ def parse_source_and_pol(path: Path) -> tuple[str, str]:
     return parts[0], parts[1]
 
 
-def load_ipix_arrays(path: Path, max_windows: int | None = None, rng: np.random.Generator | None = None) -> tuple[np.ndarray, np.ndarray]:
+def load_ipix_arrays(
+    path: Path,
+    max_windows: int | None = None,
+    rng: np.random.Generator | None = None,
+    expected_processing_mode: str | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     with np.load(path) as data:
+        if expected_processing_mode is not None:
+            if "processing_mode" not in data:
+                raise ValueError(f"IPIX 文件缺少 processing_mode，无法验证预处理来源：{path}")
+            actual_processing_mode = str(data["processing_mode"].item())
+            if actual_processing_mode != expected_processing_mode:
+                raise ValueError(
+                    f"IPIX 预处理模式不匹配：期望 {expected_processing_mode}，"
+                    f"实际 {actual_processing_mode}，文件 {path}"
+                )
         x = data["E"]
         y = data["y_range"]
         if max_windows is not None and len(x) > max_windows:
@@ -54,6 +68,7 @@ class IpixWindowDataset(Dataset):
         max_windows: int | None = None,
         seed: int = 42,
         range_roll: dict[str, Any] | None = None,
+        expected_processing_mode: str | None = None,
     ):
         self.files = files
         self.x_parts: list[np.ndarray] = []
@@ -66,7 +81,12 @@ class IpixWindowDataset(Dataset):
             if remaining is not None and remaining <= 0:
                 break
             limit = remaining
-            x, y = load_ipix_arrays(path, max_windows=limit, rng=self.rng)
+            x, y = load_ipix_arrays(
+                path,
+                max_windows=limit,
+                rng=self.rng,
+                expected_processing_mode=expected_processing_mode,
+            )
             self.x_parts.append(x)
             self.y_parts.append(y)
             if remaining is not None:

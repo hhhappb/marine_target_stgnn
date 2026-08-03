@@ -276,7 +276,7 @@ def write_report(
 ## 运行配置
 
 - 数据集：IPIX Dartmouth 预处理窗口
-- 数据目录：`{args.get("data_dir", "datasets/ipix_dartmouth/processed/window4_stride4_related")}`
+- 数据目录：`{args.get("data_dir", "datasets/ipix_dartmouth/processed/window4_stride4_related_official_ipixload_auto_double")}`
 - 极化方式：`{", ".join(pols)}`
 - 模型输入：`P={args.get("P", 4)}`，`N={args.get("N", 14)}`
 - 训练轮数：`{args.get("epochs", 50)}`

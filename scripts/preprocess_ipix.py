@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import struct
@@ -44,6 +45,10 @@ TYPE_NAMES = {
 }
 
 POLARIZATIONS = ("hh", "hv", "vv", "vh")
+PROCESSING_MODES = ("official_ipixload_auto",)
+OFFICIAL_IPIXLOAD_URL = "https://soma.ece.mcmaster.ca/ipix/dartmouth/mfiles/ipixload.m"
+OFFICIAL_IPIXLOAD_SHA256 = "40f5499eeb0d1b1d7e158658bdcfddb31a18ef01eea4023e7da8ca0ba21bd517"
+OFFICIAL_IPIXLOAD_LAST_MODIFIED = "2003-10-15T14:38:19Z"
 
 
 @dataclass(frozen=True)
@@ -225,53 +230,41 @@ def make_range_labels(entry: dict[str, Any], nrange: int, target_policy: str) ->
     return labels, roles
 
 
-def fit_auto_process_stats(i_raw: Any, q_raw: Any) -> dict[str, Any]:
+def official_ipixload_auto(i_raw: Any, q_raw: Any) -> tuple[Any, dict[str, Any]]:
+    """逐距离单元复现官方 ipixload.m 的 auto 分支，保留 MATLAB double 精度。"""
     import numpy as np
 
-    i_values = i_raw.astype(np.float32)
-    q_values = q_raw.astype(np.float32)
+    if i_raw.shape != q_raw.shape or i_raw.ndim != 2:
+        raise ValueError(f"官方 auto 处理要求同形状二维 I/Q，实际为 {i_raw.shape} 和 {q_raw.shape}")
 
-    mean_i = i_values.mean(axis=0, dtype=np.float64)
-    mean_q = q_values.mean(axis=0, dtype=np.float64)
-    std_i = i_values.std(axis=0, dtype=np.float64)
-    std_q = q_values.std(axis=0, dtype=np.float64)
-
+    # axis=0 等价于对每个 rangebin 单独调用一次官方 ipixload.m。
+    i_values = i_raw.astype(np.float64)
+    q_values = q_raw.astype(np.float64)
+    mean_i = i_values.mean(axis=0)
+    mean_q = q_values.mean(axis=0)
+    std_i = i_values.std(axis=0, ddof=0)
+    std_q = q_values.std(axis=0, ddof=0)
     if np.any(std_i == 0) or np.any(std_q == 0):
-        raise ValueError("Cannot auto-process I/Q channel with zero standard deviation")
+        raise ValueError("官方 auto 处理遇到零标准差 I/Q 通道，无法产生有限结果")
 
     i_norm = (i_values - mean_i) / std_i
     q_norm = (q_values - mean_q) / std_q
-    sin_inbal = (i_norm * q_norm).mean(axis=0, dtype=np.float64)
-    sin_inbal = np.clip(sin_inbal, -0.999999, 0.999999)
-
+    sin_inbal = (i_norm * q_norm).mean(axis=0)
+    denom_squared = 1.0 - sin_inbal**2
+    if np.any(denom_squared <= 0):
+        raise ValueError("官方 auto 相位校正分母非正，输入不满足相位不平衡估计条件")
     inbalance_deg = np.arcsin(sin_inbal) * 180.0 / np.pi
+    i_rot = (i_norm - q_norm * sin_inbal) / np.sqrt(denom_squared)
+    complex_echo = i_rot + 1j * q_norm
 
-    return {
-        "mean_i": mean_i.astype(np.float32),
-        "mean_q": mean_q.astype(np.float32),
-        "std_i": std_i.astype(np.float32),
-        "std_q": std_q.astype(np.float32),
-        "sin_inbal": sin_inbal.astype(np.float32),
-        "inbalance_deg": inbalance_deg.astype(np.float32),
+    return complex_echo, {
+        "mean_i": mean_i,
+        "mean_q": mean_q,
+        "std_i": std_i,
+        "std_q": std_q,
+        "sin_inbal": sin_inbal,
+        "inbalance_deg": inbalance_deg,
     }
-
-
-def apply_auto_process_stats(i_raw: Any, q_raw: Any, stats: dict[str, Any]) -> Any:
-    import numpy as np
-
-    i_values = i_raw.astype(np.float32)
-    q_values = q_raw.astype(np.float32)
-    i_norm = (i_values - stats["mean_i"]) / stats["std_i"]
-    q_norm = (q_values - stats["mean_q"]) / stats["std_q"]
-    denom = np.sqrt(1.0 - stats["sin_inbal"] ** 2)
-    i_rot = (i_norm - q_norm * stats["sin_inbal"]) / denom
-    return (i_rot.astype(np.float32) + 1j * q_norm.astype(np.float32)).astype(np.complex64)
-
-
-def auto_process_iq(i_raw: Any, q_raw: Any) -> tuple[Any, dict[str, Any]]:
-    stats = fit_auto_process_stats(i_raw, q_raw)
-    complex_echo = apply_auto_process_stats(i_raw, q_raw, stats)
-    return complex_echo, stats
 
 
 def extract_polarization_raw(nc: NetCDFClassicFile, pol: str) -> tuple[Any, Any]:
@@ -293,17 +286,12 @@ def extract_polarization_raw(nc: NetCDFClassicFile, pol: str) -> tuple[Any, Any]
     return i_raw, q_raw
 
 
-def extract_polarization(nc: NetCDFClassicFile, pol: str) -> tuple[Any, dict[str, Any]]:
-    i_raw, q_raw = extract_polarization_raw(nc, pol)
-    return auto_process_iq(i_raw, q_raw)
-
-
 def make_windows(echo: Any, start: int, stop: int, window: int, stride: int) -> Any:
     import numpy as np
 
     split = echo[start:stop]
     if split.shape[0] < window:
-        return np.empty((0, window, split.shape[1]), dtype=np.complex64)
+        return np.empty((0, window, split.shape[1]), dtype=echo.dtype)
 
     n_windows = 1 + (split.shape[0] - window) // stride
     shape = (n_windows, window, split.shape[1])
@@ -342,8 +330,13 @@ def save_split(
         mean_q=stats["mean_q"],
         std_i=stats["std_i"],
         std_q=stats["std_q"],
+        sin_inbal=stats["sin_inbal"],
         inbalance_deg=stats["inbalance_deg"],
         stats_scope=np.array(stats["stats_scope"]),
+        processing_mode=np.array(stats["processing_mode"]),
+        processing_semantics=np.array(stats["processing_semantics"]),
+        processing_source_url=np.array(stats["processing_source_url"]),
+        processing_source_sha256=np.array(stats["processing_source_sha256"]),
         source_file=np.array(source_file),
         polarization=np.array(pol),
         split=np.array(split_name),
@@ -360,6 +353,7 @@ def save_split(
         "shape": list(windows.shape),
         "primary": int(entry["primary"]),
         "secondary": [int(item) for item in entry["secondary"]],
+        "source_sha256": stats["source_sha256"],
     }
 
 
@@ -381,14 +375,18 @@ def preprocess(args: argparse.Namespace) -> None:
     if missing:
         raise SystemExit(f"Missing target labels for: {', '.join(missing)}")
 
-    output_name = f"window{args.window}_stride{args.stride}_{args.target_policy}"
-    if args.stats_scope != "full_file":
-        output_name = f"{output_name}_stats_{args.stats_scope}"
+    output_name = (
+        f"window{args.window}_stride{args.stride}_{args.target_policy}"
+        "_official_ipixload_auto_double"
+    )
     output_root = args.output_dir / output_name
+    if output_root.exists():
+        raise SystemExit(f"Refusing to overwrite existing preprocessing directory: {output_root}")
     records: list[dict[str, Any]] = []
 
     for cdf_path in cdf_paths:
         nc = NetCDFClassicFile(cdf_path)
+        source_sha256 = hashlib.sha256(nc.data).hexdigest()
         adc_var = nc.variables["adc_data"]
         nsweep, ntxpol, nrange, nadc = nc.shape_of(adc_var)
         if (ntxpol, nrange, nadc) != (2, 14, 4):
@@ -400,15 +398,14 @@ def preprocess(args: argparse.Namespace) -> None:
         split_at = int(nsweep * args.train_fraction)
 
         for pol in args.pols:
-            if args.stats_scope == "full_file":
-                echo, stats = extract_polarization(nc, pol)
-            elif args.stats_scope == "train_only":
-                i_raw, q_raw = extract_polarization_raw(nc, pol)
-                stats = fit_auto_process_stats(i_raw[:split_at], q_raw[:split_at])
-                echo = apply_auto_process_stats(i_raw, q_raw, stats)
-            else:
-                raise ValueError(f"Unsupported stats_scope: {args.stats_scope}")
+            i_raw, q_raw = extract_polarization_raw(nc, pol)
+            echo, stats = official_ipixload_auto(i_raw, q_raw)
             stats["stats_scope"] = args.stats_scope
+            stats["processing_mode"] = args.processing_mode
+            stats["source_sha256"] = source_sha256
+            stats["processing_semantics"] = "ipixload_per_rangebin_auto_full_sweeps"
+            stats["processing_source_url"] = OFFICIAL_IPIXLOAD_URL
+            stats["processing_source_sha256"] = OFFICIAL_IPIXLOAD_SHA256
             for split_name, start, stop in (
                 ("train", 0, split_at),
                 ("test", split_at, nsweep),
@@ -439,6 +436,14 @@ def preprocess(args: argparse.Namespace) -> None:
         "output_dir": str(output_root),
         "train_fraction": args.train_fraction,
         "stats_scope": args.stats_scope,
+        "processing_mode": args.processing_mode,
+        "processing_semantics": "ipixload_per_rangebin_auto_full_sweeps",
+        "processing_source": {
+            "url": OFFICIAL_IPIXLOAD_URL,
+            "sha256": OFFICIAL_IPIXLOAD_SHA256,
+            "last_modified": OFFICIAL_IPIXLOAD_LAST_MODIFIED,
+        },
+        "output_complex_dtype": "complex128",
         "window": args.window,
         "stride": args.stride,
         "target_policy": args.target_policy,
@@ -476,7 +481,9 @@ def parse_args() -> argparse.Namespace:
     config_args, remaining = config_parser.parse_known_args()
     config = load_config(config_args.config)
 
-    parser = argparse.ArgumentParser(description="Preprocess IPIX Dartmouth CDF files for ST-GNN experiments.")
+    parser = argparse.ArgumentParser(
+        description="Preprocess IPIX Dartmouth CDF files; official ipixload auto double is the default."
+    )
     parser.add_argument("--config", type=Path, default=config_args.config)
     parser.add_argument("--raw-dir", type=Path, default=Path(get_config_value(config, "paths.raw_dir")))
     parser.add_argument("--labels", type=Path, default=Path(get_config_value(config, "paths.labels")))
@@ -492,9 +499,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-fraction", type=float, default=get_config_value(config, "ipix.train_fraction"))
     parser.add_argument(
         "--stats-scope",
-        choices=("full_file", "train_only"),
+        choices=("full_file",),
         default="full_file",
-        help="full_file keeps legacy auto-processing; train_only fits I/Q stats on the first train_fraction sweeps.",
+        help="官方 auto 固定使用完整文件的全部 sweeps 估计统计量。",
+    )
+    parser.add_argument(
+        "--processing-mode",
+        choices=PROCESSING_MODES,
+        default="official_ipixload_auto",
+        help="按官方 auto 公式逐距离单元处理并保留 double。",
     )
     parser.add_argument(
         "--target-policy",

@@ -24,6 +24,19 @@ pip install -r requirements.txt
 
 ## Commands
 
+IPIX 预处理默认使用 McMaster 官方 `ipixload.m` 的 `auto` 分支，逐距离单元处理并保留 double 精度：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\preprocess_ipix.py
+```
+
+输出固定写入 `datasets/ipix_dartmouth/processed/window4_stride4_related_official_ipixload_auto_double`。
+脚本拒绝覆盖已存在的输出目录。官方源码地址为
+`https://soma.ece.mcmaster.ca/ipix/dartmouth/mfiles/ipixload.m`，固化 SHA-256 为
+`40f5499eeb0d1b1d7e158658bdcfddb31a18ef01eea4023e7da8ca0ba21bd517`。
+训练接口通过 `dataset.expected_processing_mode: official_ipixload_auto` 校验数据来源，
+并仅在模型输入边界将 complex128 转成现有模型契约所需的 complex64/float32。
+
 IPIX module smoke:
 
 ```powershell

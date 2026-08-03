@@ -1,10 +1,11 @@
 paths:
-  data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related
+  data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related_official_ipixload_auto_double
   save_dir: logs/training/per_file_fig7_hardpoints/sfe_replacement_original_modules_label06_hv
 
 dataset:
   type: ipix_window
-  data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related
+  data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related_official_ipixload_auto_double
+  expected_processing_mode: official_ipixload_auto
   sources: [19931109_191449_starea]
   polarizations: [hv]
 

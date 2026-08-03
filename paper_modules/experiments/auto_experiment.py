@@ -35,8 +35,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stop-on-failure", action="store_true")
     parser.add_argument("--validate-only", action="store_true", help="Validate selected per-file configs without launching training.")
     parser.add_argument(
+        "--baseline-only",
+        action="store_true",
+        help="验收仅包含 original_stgnn baseline 的复现 suite。",
+    )
+    parser.add_argument("--expected-experiment-units", type=int, default=None)
+    parser.add_argument(
         "--stats-scope",
-        choices=["full_file", "train_only", "any"],
+        choices=["full_file", "any"],
         default=None,
         help="Expected preprocessing statistics scope for selected configs.",
     )
@@ -99,10 +105,17 @@ def apply_suite(args: argparse.Namespace) -> None:
     args.run_root = Path(suite.get("run_root", args.run_root))
     args.name = str(suite.get("name", args.name))
     args.stop_on_failure = bool(suite.get("stop_on_failure", args.stop_on_failure))
+    args.baseline_only = bool(suite.get("baseline_only", args.baseline_only))
+    expected_experiment_units = suite.get("expected_experiment_units", args.expected_experiment_units)
+    if expected_experiment_units is not None:
+        expected_experiment_units = int(expected_experiment_units)
+        if expected_experiment_units <= 0:
+            raise SystemExit("expected_experiment_units 必须是正整数。")
+    args.expected_experiment_units = expected_experiment_units
     stats_scope = suite.get("stats_scope", args.stats_scope)
     if stats_scope is not None:
         stats_scope = str(stats_scope)
-        if stats_scope not in {"full_file", "train_only", "any"}:
+        if stats_scope not in {"full_file", "any"}:
             raise SystemExit(f"Unknown stats_scope in suite: {stats_scope}")
     args.stats_scope = stats_scope
 
@@ -137,7 +150,8 @@ def validate_configs(configs: list[Path], args: argparse.Namespace) -> None:
     rows: list[dict[str, Any]] = []
     errors: list[str] = []
     warnings: list[str] = []
-    required_stats_scope = getattr(args, "stats_scope", None)
+    baseline_only = bool(getattr(args, "baseline_only", False))
+    expected_experiment_units = getattr(args, "expected_experiment_units", None)
 
     for config_path in configs:
         base_cfg = load_config(config_path)
@@ -162,10 +176,10 @@ def validate_configs(configs: list[Path], args: argparse.Namespace) -> None:
                 errors.append(f"{label}: eval.threshold_source 必须是 train_clutter。")
             if meta["paths_data_dir"] != meta["dataset_data_dir"]:
                 errors.append(f"{label}: paths.data_dir 与 dataset.data_dir 不一致。")
-            if required_stats_scope == "train_only" and "stats_train_only" not in meta["data_dir"]:
-                errors.append(f"{label}: 当前 suite 声明 stats_scope=train_only，数据目录必须使用 stats_train_only。")
-            if required_stats_scope == "full_file" and "stats_train_only" in meta["data_dir"]:
-                errors.append(f"{label}: 当前 suite 声明 stats_scope=full_file，数据目录不能使用 stats_train_only。")
+            if meta["expected_processing_mode"] != "official_ipixload_auto":
+                errors.append(
+                    f"{label}: dataset.expected_processing_mode 必须是 official_ipixload_auto。"
+                )
 
     pairs: dict[tuple[str, str, int], list[dict[str, Any]]] = {}
     for row in rows:
@@ -179,6 +193,10 @@ def validate_configs(configs: list[Path], args: argparse.Namespace) -> None:
         if len(baseline_rows) != 1:
             errors.append(f"{pair_label}: 需要且只能有 1 个 original_stgnn baseline，实际 {len(baseline_rows)} 个。")
             continue
+        if baseline_only:
+            if candidate_rows:
+                errors.append(f"{pair_label}: baseline-only 复现 suite 不允许包含候选模型。")
+            continue
         if not candidate_rows:
             errors.append(f"{pair_label}: 缺少待比较模型配置。")
             continue
@@ -188,6 +206,16 @@ def validate_configs(configs: list[Path], args: argparse.Namespace) -> None:
             if mismatches:
                 errors.append(f"{pair_label}: {Path(candidate['config']).name} 与 baseline 字段不一致: {', '.join(mismatches)}。")
 
+    experiment_units = {
+        (row["sources"][0], row["polarizations"][0])
+        for row in rows
+        if len(row["sources"]) == 1 and len(row["polarizations"]) == 1
+    }
+    if expected_experiment_units is not None and len(experiment_units) != expected_experiment_units:
+        errors.append(
+            f"独立实验单元数量应为 {expected_experiment_units}，实际为 {len(experiment_units)}。"
+        )
+
     if args.seeds is None:
         warnings.append("当前 suite 只使用配置内 seed；seed42 结果只能作方向读数，正式结论建议至少 3 个 seed。")
 
@@ -195,6 +223,7 @@ def validate_configs(configs: list[Path], args: argparse.Namespace) -> None:
     print(f"- configs: {len(configs)}", flush=True)
     print(f"- run units: {len(rows)}", flush=True)
     print(f"- pairs: {len(pairs)}", flush=True)
+    print(f"- experiment units: {len(experiment_units)}", flush=True)
     if warnings:
         print("Warnings:", flush=True)
         for item in warnings:
@@ -239,6 +268,7 @@ def config_metadata(config: dict[str, Any]) -> dict[str, Any]:
         "data_dir": paths_data_dir,
         "paths_data_dir": paths_data_dir,
         "dataset_data_dir": dataset_data_dir,
+        "expected_processing_mode": str(dataset_cfg.get("expected_processing_mode", "")),
         "train_augmentation": augmentation,
         "sources": sources,
         "source": sources[0] if len(sources) == 1 else "",
@@ -258,6 +288,7 @@ def config_metadata(config: dict[str, Any]) -> dict[str, Any]:
 def comparable_mismatches(candidate: dict[str, Any], baseline: dict[str, Any]) -> list[str]:
     fields = [
         "data_dir",
+        "expected_processing_mode",
         "train_augmentation",
         "epochs",
         "batch_size",
