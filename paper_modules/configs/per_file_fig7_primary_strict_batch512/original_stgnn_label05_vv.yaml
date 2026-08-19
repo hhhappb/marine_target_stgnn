@@ -1,0 +1,42 @@
+experiment:
+  protocol_family: diagnostic
+  protocol_version: ipix_primary_strict_batch512_v1
+  question: 论文是否仅把PRC作为目标并将SRC全程作为clutter
+paths:
+  data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related_official_ipixload_auto_double
+  save_dir: logs/training/per_file_fig7_primary_strict_batch512/original_stgnn_label05_vv
+dataset:
+  type: ipix_window
+  data_dir: datasets/ipix_dartmouth/processed/window4_stride4_related_official_ipixload_auto_double
+  expected_processing_mode: official_ipixload_auto
+  sources:
+  - 19931108_220902_starea
+  polarizations:
+  - vv
+  train_label_policy: primary_strict
+  evaluation_label_policy: primary_strict
+ipix:
+  polarizations:
+  - vv
+model:
+  name: original_stgnn
+  pulses: 4
+  range_cells: 14
+loss:
+  type: cross_entropy
+  use_class_weights: false
+train:
+  epochs: 60
+  batch_size: 512
+  learning_rate: 0.001
+  optimizer: adam
+  weight_decay: 0.0
+  scheduler: none
+  grad_clip: null
+  num_workers: 0
+  seed: 42
+eval:
+  protocol: per_file_pol
+  threshold_source: train_clutter
+  pfa_values:
+  - 0.001

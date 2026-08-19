@@ -26,10 +26,33 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from paper_modules.datasets import build_dataset, list_split_files, load_ipix_arrays, parse_source_and_pol, seed_everything
+from paper_modules.datasets.ipix_window import IPIX_LABEL_IGNORE_INDEX
 from paper_modules.datasets.scr_npz import ScrNpzDataset, list_test_scr_files
 from paper_modules.losses import build_loss
 from paper_modules.models import build_model
 from utils.config import get_config_value, load_config
+
+
+def _forward_detection_model(
+    model: nn.Module,
+    echoes: torch.Tensor,
+    labels: torch.Tensor | None = None,
+) -> torch.Tensor:
+    if not bool(getattr(model, "requires_valid_range_mask", False)):
+        return model(echoes)
+    if labels is None:
+        raise ValueError("structural mask 模型前向需要逐距离单元 labels。")
+    if labels.shape != (echoes.size(0), echoes.size(2)):
+        raise ValueError(
+            "labels 与 echoes 的 batch/range 维不一致："
+            f"labels={tuple(labels.shape)}, echoes={tuple(echoes.shape)}。"
+        )
+    supported = (labels == 0) | (labels == 1) | (labels == IPIX_LABEL_IGNORE_INDEX)
+    if not bool(supported.all()):
+        unknown = torch.unique(labels[~supported]).detach().cpu().tolist()
+        raise ValueError(f"structural mask 标签仅支持 0/1/-100，实际包含 {unknown}。")
+    valid_range_mask = labels != IPIX_LABEL_IGNORE_INDEX
+    return model(echoes, valid_range_mask=valid_range_mask)
 
 
 def train_one_epoch(
@@ -73,7 +96,7 @@ def train_one_epoch(
             labels = labels.to(device, non_blocking=True)
             echoes = torch.complex(real, imag)
 
-            logits = model(echoes)
+            logits = _forward_detection_model(model, echoes, labels)
             loss = criterion(logits, labels)
             if collect_temporal_diagnostics and hasattr(model, "get_temporal_diagnostics"):
                 diagnostics.append(model.get_temporal_diagnostics())
@@ -166,7 +189,7 @@ def probe_batch_sizes(
             echoes = torch.complex(real, imag)
             # 首次执行只用于 CUDA kernel/allocator 预热，不计入吞吐。
             model.zero_grad(set_to_none=True)
-            logits = model(echoes)
+            logits = _forward_detection_model(model, echoes, labels)
             loss = criterion(logits, labels)
             loss.backward()
             torch.cuda.synchronize(device)
@@ -175,7 +198,7 @@ def probe_batch_sizes(
             logits = loss = None
             torch.cuda.reset_peak_memory_stats(device)
             started = time.perf_counter()
-            logits = model(echoes)
+            logits = _forward_detection_model(model, echoes, labels)
             loss = criterion(logits, labels)
             loss.backward()
             torch.cuda.synchronize(device)
@@ -229,6 +252,9 @@ def evaluate_files(
     max_windows_per_file: int | None = None,
     threshold_files: list[Path] | None = None,
     threshold_source: str = "test_diagnostic_current_eval",
+    threshold_window_fraction_range: list[float] | tuple[float, float] | None = None,
+    label_policy: str = "stored",
+    secondary_echo_policy: str = "stored",
     max_threshold_windows: int | None = None,
     seed: int = 42,
 ) -> dict[str, object]:
@@ -244,14 +270,18 @@ def evaluate_files(
         device,
         eval_rng,
         max_windows_per_file=max_windows_per_file,
+        label_policy=label_policy,
+        secondary_echo_policy=secondary_echo_policy,
     )
 
     if threshold_source == "test_diagnostic_current_eval":
         threshold_clutter = eval_clutter
         num_threshold_files = len(records)
-    elif threshold_source == "train_clutter":
+    elif threshold_source in {"train_clutter", "calibration_clutter"}:
         if threshold_files is None:
-            raise ValueError("threshold_source=train_clutter 需要提供 threshold_files。")
+            raise ValueError(f"threshold_source={threshold_source} 需要提供 threshold_files。")
+        if threshold_source == "calibration_clutter" and threshold_window_fraction_range is None:
+            raise ValueError("threshold_source=calibration_clutter 需要 calibration_window_fraction_range。")
         threshold_records, threshold_clutter = collect_file_scores(
             model,
             threshold_files,
@@ -259,17 +289,29 @@ def evaluate_files(
             device,
             threshold_rng,
             max_total_windows=max_threshold_windows,
+            window_fraction_range=threshold_window_fraction_range,
+            label_policy=label_policy,
+            secondary_echo_policy=secondary_echo_policy,
         )
         num_threshold_files = len(threshold_records)
     else:
         raise ValueError(f"未知 threshold_source: {threshold_source}")
 
+    num_target_bins = int(sum(np.count_nonzero(item["labels"] == 1) for item in records))
+    num_ignore_bins = int(
+        sum(np.count_nonzero((item["labels"] != 0) & (item["labels"] != 1)) for item in records)
+    )
     results: dict[str, object] = {
         "num_files": len(records),
+        "label_policy": label_policy,
+        "secondary_echo_policy": secondary_echo_policy,
+        "num_target_bins": num_target_bins,
         "num_clutter_bins": int(eval_clutter.shape[0]),
+        "num_ignore_bins": num_ignore_bins,
         "threshold_source": threshold_source,
         "num_threshold_files": num_threshold_files,
         "num_clutter_bins_for_threshold": int(threshold_clutter.shape[0]),
+        "threshold_window_fraction_range": threshold_window_fraction_range,
         "pfa": {},
     }
     for pfa in pfa_values:
@@ -289,7 +331,17 @@ def evaluate_files(
             }
             for key in total:
                 total[key] += counts[key]
-            per_file.append({"source": item["source"], "polarization": item["polarization"], **_pd_pf(counts), **counts})
+            per_file.append(
+                {
+                    "source": item["source"],
+                    "polarization": item["polarization"],
+                    "num_ignore_bins": int(
+                        np.count_nonzero((labels != 0) & (labels != 1))
+                    ),
+                    **_pd_pf(counts),
+                    **counts,
+                }
+            )
         results["pfa"][str(pfa)] = {"threshold": threshold, **_pd_pf(total), **total, "per_file": per_file}
     return results
 
@@ -302,6 +354,9 @@ def collect_file_scores(
     rng: Any,
     max_windows_per_file: int | None = None,
     max_total_windows: int | None = None,
+    window_fraction_range: list[float] | tuple[float, float] | None = None,
+    label_policy: str = "stored",
+    secondary_echo_policy: str = "stored",
 ) -> tuple[list[dict[str, Any]], Any]:
     import numpy as np
 
@@ -316,7 +371,14 @@ def collect_file_scores(
             limit = max_windows_per_file
             if remaining is not None:
                 limit = remaining if limit is None else min(limit, remaining)
-            x, y = load_ipix_arrays(path, max_windows=limit, rng=rng)
+            x, y = load_ipix_arrays(
+                path,
+                max_windows=limit,
+                rng=rng,
+                window_fraction_range=window_fraction_range,
+                label_policy=label_policy,
+                secondary_echo_policy=secondary_echo_policy,
+            )
             if remaining is not None:
                 remaining -= len(x)
             o0_parts: list[np.ndarray] = []
@@ -324,7 +386,14 @@ def collect_file_scores(
                 batch = x[start : start + batch_size]
                 real = torch.from_numpy(batch.real.astype(np.float32, copy=False)).to(device)
                 imag = torch.from_numpy(batch.imag.astype(np.float32, copy=False)).to(device)
-                logits = model(torch.complex(real, imag))
+                batch_labels = torch.from_numpy(
+                    y[start : start + batch_size]
+                ).to(device)
+                logits = _forward_detection_model(
+                    model,
+                    torch.complex(real, imag),
+                    batch_labels,
+                )
                 probs = torch.softmax(logits, dim=1)[:, 0, :].cpu().numpy()
                 o0_parts.append(probs)
             o0 = np.concatenate(o0_parts, axis=0)
@@ -447,7 +516,12 @@ def collect_dataset_scores(
         for real, imag, labels in loader:
             real = real.to(device, non_blocking=True)
             imag = imag.to(device, non_blocking=True)
-            logits = model(torch.complex(real, imag))
+            device_labels = labels.to(device, non_blocking=True)
+            logits = _forward_detection_model(
+                model,
+                torch.complex(real, imag),
+                device_labels,
+            )
             if score_space == "o0":
                 scores = torch.softmax(logits, dim=1)[:, 0, :]
             elif score_space == "logit_margin":
@@ -525,6 +599,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-probe-output", type=Path, default=None)
     parser.add_argument("--max-train-windows", type=int, default=None)
     parser.add_argument("--max-test-windows-per-file", type=int, default=None)
+    parser.add_argument(
+        "--ipix-calibration-tail-fraction-of-train",
+        type=float,
+        default=None,
+        help="将原IPIX训练文件尾部比例留作独立阈值校准；1/6对应完整时间轴50/10/40。",
+    )
     parser.add_argument("--checkpoint", type=Path, default=None)
     parser.add_argument("--save-dir", type=Path, default=None)
     parser.add_argument("--deterministic", action="store_true")
@@ -547,6 +627,19 @@ def main() -> None:
         config["train"]["batch_size"] = args.batch_size
     if args.gradient_accumulation_steps is not None:
         config["train"]["gradient_accumulation_steps"] = args.gradient_accumulation_steps
+    if args.ipix_calibration_tail_fraction_of_train is not None:
+        fraction = float(args.ipix_calibration_tail_fraction_of_train)
+        if not 0.0 < fraction < 1.0:
+            raise ValueError("--ipix-calibration-tail-fraction-of-train 必须位于(0,1)。")
+        dataset_cfg = config.setdefault("dataset", {})
+        if str(dataset_cfg.get("type", "ipix_window")) != "ipix_window":
+            raise ValueError("独立校准尾段目前只支持 dataset.type=ipix_window。")
+        boundary = 1.0 - fraction
+        dataset_cfg["train_window_fraction_range"] = [0.0, boundary]
+        dataset_cfg["calibration_window_fraction_range"] = [boundary, 1.0]
+        config.setdefault("eval", {})["threshold_source"] = "calibration_clutter"
+        config["eval"]["calibration_protocol"] = "tail_of_original_train_file"
+        config["eval"]["calibration_tail_fraction_of_original_train"] = fraction
     accumulation_steps = int(config.get("train", {}).get("gradient_accumulation_steps", 1))
     if accumulation_steps < 1:
         raise ValueError(f"train.gradient_accumulation_steps 必须为正整数，实际为 {accumulation_steps}。")
@@ -725,6 +818,20 @@ def main() -> None:
             max_windows_per_file=args.max_test_windows_per_file,
             threshold_files=train_files,
             threshold_source=str(config.get("eval", {}).get("threshold_source", "test_diagnostic_current_eval")),
+            threshold_window_fraction_range=(
+                dataset_cfg.get("calibration_window_fraction_range")
+                if str(config.get("eval", {}).get("threshold_source")) == "calibration_clutter"
+                else dataset_cfg.get("train_window_fraction_range")
+            ),
+            label_policy=str(
+                dataset_cfg.get(
+                    "evaluation_label_policy",
+                    dataset_cfg.get("label_policy", "stored"),
+                )
+            ),
+            secondary_echo_policy=str(
+                dataset_cfg.get("secondary_echo_policy", "stored")
+            ),
             max_threshold_windows=args.max_train_windows,
             seed=seed,
         )

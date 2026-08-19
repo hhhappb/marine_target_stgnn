@@ -9,6 +9,19 @@ import torch
 from torch.utils.data import Dataset
 
 
+IPIX_LABEL_IGNORE_INDEX = -100
+IPIX_LABEL_POLICIES = {
+    "stored",
+    "related",
+    "primary_strict",
+    "primary_with_related_ignore",
+}
+IPIX_SECONDARY_ECHO_POLICIES = {
+    "stored",
+    "clutter_permutation",
+}
+
+
 def seed_everything(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -38,6 +51,9 @@ def load_ipix_arrays(
     path: Path,
     max_windows: int | None = None,
     rng: np.random.Generator | None = None,
+    window_fraction_range: list[float] | tuple[float, float] | None = None,
+    label_policy: str = "stored",
+    secondary_echo_policy: str = "stored",
     expected_processing_mode: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     with np.load(path) as data:
@@ -51,13 +67,24 @@ def load_ipix_arrays(
                     f"实际 {actual_processing_mode}，文件 {path}"
                 )
         x = data["E"]
-        y = data["y_range"]
+        y = _labels_for_policy(data, np.asarray(data["y_range"]), label_policy)
+        if window_fraction_range is not None:
+            start, end = _window_fraction_bounds(len(x), window_fraction_range)
+            x = x[start:end]
+            y = y[start:end]
         if max_windows is not None and len(x) > max_windows:
             if rng is None:
                 rng = np.random.default_rng(0)
             idx = np.sort(rng.choice(len(x), size=max_windows, replace=False))
             x = x[idx]
             y = y[idx]
+        x = _secondary_echoes_for_policy(
+            data,
+            np.asarray(x),
+            label_policy=label_policy,
+            secondary_echo_policy=secondary_echo_policy,
+            rng=rng,
+        )
         return x.astype(np.complex64, copy=False), y.astype(np.int64, copy=False)
 
 
@@ -68,6 +95,9 @@ class IpixWindowDataset(Dataset):
         max_windows: int | None = None,
         seed: int = 42,
         range_roll: dict[str, Any] | None = None,
+        window_fraction_range: list[float] | tuple[float, float] | None = None,
+        label_policy: str = "stored",
+        secondary_echo_policy: str = "stored",
         expected_processing_mode: str | None = None,
     ):
         self.files = files
@@ -85,6 +115,9 @@ class IpixWindowDataset(Dataset):
                 path,
                 max_windows=limit,
                 rng=self.rng,
+                window_fraction_range=window_fraction_range,
+                label_policy=label_policy,
+                secondary_echo_policy=secondary_echo_policy,
                 expected_processing_mode=expected_processing_mode,
             )
             self.x_parts.append(x)
@@ -97,7 +130,10 @@ class IpixWindowDataset(Dataset):
 
         x = np.concatenate(self.x_parts, axis=0)
         y = np.concatenate(self.y_parts, axis=0)
-        counts = np.bincount(y.reshape(-1), minlength=2).astype(np.float64)
+        valid_labels = y[(y == 0) | (y == 1)]
+        if valid_labels.size == 0:
+            raise ValueError("IPIX 标签策略没有产生任何 target/clutter 单元。")
+        counts = np.bincount(valid_labels, minlength=2).astype(np.float64)
         if np.any(counts == 0):
             self._class_weights = torch.ones(2, dtype=torch.float32)
         else:
@@ -129,6 +165,122 @@ class IpixWindowDataset(Dataset):
 
     def class_weights(self) -> torch.Tensor:
         return self._class_weights.clone()
+
+
+def _labels_for_policy(data: Any, stored_labels: np.ndarray, label_policy: str) -> np.ndarray:
+    policy = str(label_policy)
+    if policy not in IPIX_LABEL_POLICIES:
+        raise ValueError(
+            f"dataset.label_policy 仅支持 {sorted(IPIX_LABEL_POLICIES)}，实际为 {policy!r}。"
+        )
+    if stored_labels.ndim != 2:
+        raise ValueError(f"IPIX y_range 必须是二维数组，实际 shape={stored_labels.shape}。")
+    if policy == "stored":
+        return stored_labels
+    if "range_roles" not in data:
+        raise ValueError(f"label_policy={policy} 需要 NPZ 中存在 range_roles。")
+
+    roles = np.asarray(data["range_roles"], dtype=np.int8)
+    if roles.shape != (stored_labels.shape[1],):
+        raise ValueError(
+            "IPIX range_roles 与 y_range 的距离单元维不一致："
+            f"roles={roles.shape}, y_range={stored_labels.shape}。"
+        )
+    if not np.all(np.isin(roles, [0, 1, 2])):
+        raise ValueError(f"IPIX range_roles 仅允许0/1/2，实际为 {np.unique(roles).tolist()}。")
+    if int(np.count_nonzero(roles == 2)) != 1:
+        raise ValueError("IPIX range_roles 必须且只能包含一个 primary(role=2)距离单元。")
+
+    labels = np.zeros(roles.shape[0], dtype=np.int64)
+    if policy == "related":
+        labels[roles > 0] = 1
+    elif policy == "primary_strict":
+        labels[roles == 2] = 1
+    else:
+        labels[roles == 1] = IPIX_LABEL_IGNORE_INDEX
+        labels[roles == 2] = 1
+    return np.broadcast_to(labels, stored_labels.shape).copy()
+
+
+def _secondary_echoes_for_policy(
+    data: Any,
+    echoes: np.ndarray,
+    label_policy: str,
+    secondary_echo_policy: str,
+    rng: np.random.Generator | None,
+) -> np.ndarray:
+    policy = str(secondary_echo_policy)
+    if policy not in IPIX_SECONDARY_ECHO_POLICIES:
+        raise ValueError(
+            "dataset.secondary_echo_policy 仅支持 "
+            f"{sorted(IPIX_SECONDARY_ECHO_POLICIES)}，实际为 {policy!r}。"
+        )
+    if policy == "stored":
+        return echoes
+    if label_policy != "primary_with_related_ignore":
+        raise ValueError(
+            "secondary_echo_policy=clutter_permutation 要求 "
+            "label_policy=primary_with_related_ignore。"
+        )
+    if "range_roles" not in data:
+        raise ValueError("clutter_permutation 需要 NPZ 中存在 range_roles。")
+    if echoes.ndim != 3:
+        raise ValueError(f"IPIX E 必须是 [windows, P, N]，实际 shape={echoes.shape}。")
+
+    roles = np.asarray(data["range_roles"], dtype=np.int8)
+    if roles.shape != (echoes.shape[2],):
+        raise ValueError(
+            "IPIX range_roles 与 E 的距离单元维不一致："
+            f"roles={roles.shape}, E={echoes.shape}。"
+        )
+    secondary_indices = np.flatnonzero(roles == 1)
+    clutter_indices = np.flatnonzero(roles == 0)
+    if secondary_indices.size == 0:
+        raise ValueError("clutter_permutation 至少需要一个 secondary(role=1) 单元。")
+    if clutter_indices.size == 0:
+        raise ValueError("clutter_permutation 至少需要一个 clutter(role=0) 单元。")
+    if echoes.shape[0] == 0:
+        raise ValueError("clutter_permutation 不能处理空窗口集合。")
+    if rng is None:
+        rng = np.random.default_rng(0)
+
+    source = echoes
+    replaced = echoes.copy()
+    window_indices = np.arange(echoes.shape[0])
+    for secondary_index in secondary_indices:
+        if echoes.shape[0] > 1:
+            shift = int(rng.integers(1, echoes.shape[0]))
+            donor_windows = np.roll(window_indices, shift)
+        else:
+            donor_windows = window_indices
+        donor_cells = rng.choice(clutter_indices, size=echoes.shape[0], replace=True)
+        replaced[:, :, secondary_index] = source[donor_windows, :, donor_cells]
+    return replaced
+
+
+def _parse_window_fraction_range(values: list[float] | tuple[float, float]) -> tuple[float, float]:
+    if len(values) != 2:
+        raise ValueError(f"window_fraction_range 必须包含[start, end]两个值，实际为 {values}。")
+    start, end = (float(values[0]), float(values[1]))
+    if not 0.0 <= start < end <= 1.0:
+        raise ValueError(f"window_fraction_range 必须满足0<=start<end<=1，实际为 {values}。")
+    return start, end
+
+
+def _window_fraction_bounds(
+    windows: int,
+    values: list[float] | tuple[float, float],
+) -> tuple[int, int]:
+    if windows <= 0:
+        raise ValueError(f"window_fraction_range 需要正窗口数，实际为 {windows}。")
+    start_fraction, end_fraction = _parse_window_fraction_range(values)
+    start = int(np.floor(windows * start_fraction))
+    end = windows if end_fraction == 1.0 else int(np.floor(windows * end_fraction))
+    if end <= start:
+        raise ValueError(
+            f"window_fraction_range 的时间比例切片为空：windows={windows}, range={values}。"
+        )
+    return start, end
 
 
 def _parse_range_roll(config: dict[str, Any] | None) -> dict[str, Any]:

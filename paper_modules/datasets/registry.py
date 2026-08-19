@@ -26,11 +26,24 @@ def build_dataset(config: dict[str, Any], split: str, **overrides: Any):
             raise ValueError(f"没有找到 IPIX {split} 文件：data_dir={data_dir}, sources={sources}, polarizations={pols}")
         augment_cfg = dataset_cfg.get("augment", {}) if split == "train" else {}
         range_roll = augment_cfg.get("range_roll") if isinstance(augment_cfg, dict) else None
+        window_fraction_range = dataset_cfg.get(f"{split}_window_fraction_range")
+        default_label_policy = str(dataset_cfg.get("label_policy", "stored"))
+        if split == "train":
+            label_policy = str(dataset_cfg.get("train_label_policy", default_label_policy))
+        else:
+            label_policy = str(
+                dataset_cfg.get("evaluation_label_policy", default_label_policy)
+            )
         return IpixWindowDataset(
             files,
             max_windows=max_windows,
             seed=seed,
             range_roll=range_roll,
+            window_fraction_range=window_fraction_range,
+            label_policy=label_policy,
+            secondary_echo_policy=str(
+                dataset_cfg.get("secondary_echo_policy", "stored")
+            ),
             expected_processing_mode=dataset_cfg.get("expected_processing_mode"),
         )
 

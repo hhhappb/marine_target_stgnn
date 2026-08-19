@@ -1,6 +1,12 @@
 paths:
-  data_dir: datasets/ipix_dartmouth/processed/window32_stride4_related
+  data_dir: datasets/ipix_dartmouth/processed/window32_stride4_related_official_ipixload_auto_double
   save_dir: paper_modules/results/real_imag_sfe_replacement_radar_prior_dynamic_sfe_p32
+
+dataset:
+  type: ipix_window
+  data_dir: datasets/ipix_dartmouth/processed/window32_stride4_related_official_ipixload_auto_double
+  expected_processing_mode: official_ipixload_auto
+  polarizations: [hh, hv, vv, vh]
 
 ipix:
   polarizations: [hh, hv, vv, vh]

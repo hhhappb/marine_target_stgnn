@@ -28,6 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=None)
     parser.add_argument("--max-train-windows", type=int, default=None)
     parser.add_argument("--max-test-windows-per-file", type=int, default=None)
+    parser.add_argument("--ipix-calibration-tail-fraction-of-train", type=float, default=None)
     parser.add_argument("--target-pfa", type=float, default=None)
     parser.add_argument("--run-root", type=Path, default=Path("logs/training"))
     parser.add_argument("--name", type=str, default="auto_modules")
@@ -128,6 +129,10 @@ def apply_suite(args: argparse.Namespace) -> None:
     args.num_workers = overrides.get("num_workers", args.num_workers)
     args.max_train_windows = overrides.get("max_train_windows", args.max_train_windows)
     args.max_test_windows_per_file = overrides.get("max_test_windows_per_file", args.max_test_windows_per_file)
+    args.ipix_calibration_tail_fraction_of_train = overrides.get(
+        "ipix_calibration_tail_fraction_of_train",
+        args.ipix_calibration_tail_fraction_of_train,
+    )
 
 
 def resolve_configs(args: argparse.Namespace) -> list[Path]:
@@ -172,8 +177,15 @@ def validate_configs(configs: list[Path], args: argparse.Namespace) -> None:
                 errors.append(f"{label}: per-file 配置必须且只能声明 1 个 dataset.polarizations。")
             if meta["eval_protocol"] != "per_file_pol":
                 errors.append(f"{label}: eval.protocol 必须是 per_file_pol。")
-            if meta["threshold_source"] != "train_clutter":
-                errors.append(f"{label}: eval.threshold_source 必须是 train_clutter。")
+            expected_threshold_source = (
+                "calibration_clutter"
+                if getattr(args, "ipix_calibration_tail_fraction_of_train", None) is not None
+                else "train_clutter"
+            )
+            if meta["threshold_source"] != expected_threshold_source:
+                errors.append(
+                    f"{label}: eval.threshold_source 必须是 {expected_threshold_source}。"
+                )
             if meta["paths_data_dir"] != meta["dataset_data_dir"]:
                 errors.append(f"{label}: paths.data_dir 与 dataset.data_dir 不一致。")
             if meta["expected_processing_mode"] != "official_ipixload_auto":
@@ -249,6 +261,19 @@ def prepare_run_config(args: argparse.Namespace, base_cfg: dict[str, Any], seed:
         cfg["train"]["gradient_accumulation_steps"] = args.gradient_accumulation_steps
     if args.num_workers is not None:
         cfg["train"]["num_workers"] = args.num_workers
+    if args.ipix_calibration_tail_fraction_of_train is not None:
+        fraction = float(args.ipix_calibration_tail_fraction_of_train)
+        if not 0.0 < fraction < 1.0:
+            raise ValueError("--ipix-calibration-tail-fraction-of-train 必须位于(0,1)。")
+        dataset_cfg = cfg.setdefault("dataset", {})
+        if str(dataset_cfg.get("type", "ipix_window")) != "ipix_window":
+            raise ValueError("独立校准尾段目前只支持 dataset.type=ipix_window。")
+        boundary = 1.0 - fraction
+        dataset_cfg["train_window_fraction_range"] = [0.0, boundary]
+        dataset_cfg["calibration_window_fraction_range"] = [boundary, 1.0]
+        cfg.setdefault("eval", {})["threshold_source"] = "calibration_clutter"
+        cfg["eval"]["calibration_protocol"] = "tail_of_original_train_file"
+        cfg["eval"]["calibration_tail_fraction_of_original_train"] = fraction
     return cfg
 
 
@@ -257,6 +282,7 @@ def config_metadata(config: dict[str, Any]) -> dict[str, Any]:
     eval_cfg = config.get("eval", {})
     train_cfg = config.get("train", {})
     paths_cfg = config.get("paths", {})
+    experiment_cfg = config.get("experiment", {})
     pols = _as_list(dataset_cfg.get("polarizations", config.get("ipix", {}).get("polarizations", []))) or []
     sources = _as_list(dataset_cfg.get("sources", dataset_cfg.get("source"))) or []
     paths_data_dir = str(paths_cfg.get("data_dir", ""))
@@ -269,6 +295,20 @@ def config_metadata(config: dict[str, Any]) -> dict[str, Any]:
         "paths_data_dir": paths_data_dir,
         "dataset_data_dir": dataset_data_dir,
         "expected_processing_mode": str(dataset_cfg.get("expected_processing_mode", "")),
+        "protocol_family": str(experiment_cfg.get("protocol_family", "")),
+        "label_policy": str(dataset_cfg.get("label_policy", "stored")),
+        "train_label_policy": str(
+            dataset_cfg.get(
+                "train_label_policy",
+                dataset_cfg.get("label_policy", "stored"),
+            )
+        ),
+        "evaluation_label_policy": str(
+            dataset_cfg.get(
+                "evaluation_label_policy",
+                dataset_cfg.get("label_policy", "stored"),
+            )
+        ),
         "train_augmentation": augmentation,
         "sources": sources,
         "source": sources[0] if len(sources) == 1 else "",
@@ -276,6 +316,10 @@ def config_metadata(config: dict[str, Any]) -> dict[str, Any]:
         "polarization": pols[0] if len(pols) == 1 else "",
         "eval_protocol": str(eval_cfg.get("protocol", "per_file_pol")),
         "threshold_source": str(eval_cfg.get("threshold_source", "test_diagnostic_current_eval")),
+        "train_window_fraction_range": json.dumps(dataset_cfg.get("train_window_fraction_range")),
+        "calibration_window_fraction_range": json.dumps(
+            dataset_cfg.get("calibration_window_fraction_range")
+        ),
         "epochs": int(train_cfg.get("epochs", 0)),
         "batch_size": int(train_cfg.get("batch_size", 0)),
         "gradient_accumulation_steps": int(train_cfg.get("gradient_accumulation_steps", 1)),
@@ -431,7 +475,7 @@ def write_summary(path: Path, rows: list[dict[str, Any]], target_pfa: float | No
         "",
         f"- target_pfa: {target_pfa if target_pfa is not None else 0.001}",
         f"- threshold_source: {', '.join(threshold_sources) if threshold_sources else 'unknown'}",
-        "- 说明：train_clutter 使用训练集杂波分数定阈值；test_diagnostic_current_eval 使用测试集杂波分数定阈值，只适合作为模块筛选诊断。",
+        "- 说明：train_clutter 使用训练集杂波分数定阈值；calibration_clutter 使用与训练段不重叠的独立校准段定阈值；test_diagnostic_current_eval 使用测试集杂波分数定阈值，只适合作为模块筛选诊断。",
         "",
     ]
     lines.extend(
