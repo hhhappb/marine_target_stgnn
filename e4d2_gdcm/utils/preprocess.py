@@ -388,20 +388,18 @@ class E4D2Preprocessor:
 #  Data loading  (compatible with original .mat format)
 # ────────────────────────────────────────────────────────────
 
-def load_mat_scipy(mat_path, N_range=None, pulse_offset=1955):
-    """Load staring radar .mat file (scipy format).
+def load_mat_scipy(mat_path, N_range=256, pulse_offset=1955):
+    """Load staring radar .mat file (scipy format) and crop to N_range.
 
-    Protocol v1.1: the range dimension is KEPT INTACT (NO cropping) — the
-    paper only segments the PULSE dimension into 4-frame non-overlapping
-    windows. N_range=None returns the full range profile.
+    If the data is already N_range wide (pre-cropped), cropping is skipped.
 
     Args:
         mat_path:     path to .mat file
-        N_range:      optional crop width (legacy). None = keep full range dim
-        pulse_offset: legacy crop centre (unused when N_range is None)
+        N_range:      number of range bins to keep (default 256)
+        pulse_offset: original centre pulse index (default 1955)
 
     Returns:
-        data: [total_pulses, N_full] complex64, N_full = full range width
+        data: [total_pulses, N_range] complex64
     """
     import scipy.io as sio
     mat = sio.loadmat(mat_path)
@@ -409,46 +407,38 @@ def load_mat_scipy(mat_path, N_range=None, pulse_offset=1955):
     data = mat[key].astype(np.complex64)
 
     # If data is already N_range wide, skip cropping (pre-cropped data)
-    if N_range is None or data.shape[1] == N_range:
+    if data.shape[1] == N_range:
         return data
 
     SB = pulse_offset - N_range // 2
     return data[:, SB:SB + N_range]
 
 
-def _try_load_hdf5_mat(mat_path, N_range=None, pulse_offset=1955):
-    """Attempt HDF5 .mat load; returns None if h5py unavailable or format mismatch.
-
-    N_range=None keeps the full range dimension (protocol v1.1).
-    """
+def _try_load_hdf5_mat(mat_path):
+    """Attempt HDF5 .mat load; returns None if h5py unavailable or format mismatch."""
     try:
         import h5py
     except ImportError:
         return None
     try:
         with h5py.File(mat_path, 'r') as f:
-            def _crop(d):
-                if N_range is None or d.shape[1] == N_range:
-                    return d
-                SB = pulse_offset - N_range // 2
-                return d[:, SB:SB + N_range]
             # Try IQData keys
             if 'I' in f and 'Q' in f:
                 I = f['I'][:].T.astype(np.float64)
                 Q = f['Q'][:].T.astype(np.float64)
-                return _crop((I + 1j * Q).astype(np.complex64))
+                return (I + 1j * Q).astype(np.complex64)
             # Try amplitude_data
             if 'amplitude_data' in f:
                 dset = f['amplitude_data']
                 data = dset['real'][:] + 1j * dset['imag'][:]
-                return _crop(data.astype(np.complex64).T)
+                return data.astype(np.complex64).T
             # Generic
             for key in f:
                 if hasattr(f[key], 'shape') and len(f[key].shape) >= 2:
                     dset = f[key]
                     try:
                         data = dset['real'][:] + 1j * dset['imag'][:]
-                        return _crop(data.astype(np.complex64))
+                        return data.astype(np.complex64)
                     except (KeyError, ValueError):
                         continue
     except Exception:
@@ -456,16 +446,13 @@ def _try_load_hdf5_mat(mat_path, N_range=None, pulse_offset=1955):
     return None
 
 
-def auto_load_mat(mat_path, N_range=None, pulse_offset=1955):
-    """Load a .mat file, auto-detecting scipy vs HDF5 format.
-
-    N_range=None keeps the FULL range dimension (protocol v1.1).
-    """
+def auto_load_mat(mat_path):
+    """Load a .mat file, auto-detecting scipy vs HDF5 format."""
     try:
-        return load_mat_scipy(mat_path, N_range, pulse_offset)
+        return load_mat_scipy(mat_path)
     except Exception:
         pass
-    result = _try_load_hdf5_mat(mat_path, N_range, pulse_offset)
+    result = _try_load_hdf5_mat(mat_path)
     if result is not None:
         return result
     raise RuntimeError(f"Cannot load {mat_path} — tried scipy.loadmat and h5py")

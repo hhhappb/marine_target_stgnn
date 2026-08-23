@@ -40,17 +40,16 @@ training:
   optimizer: "adam"
   learning_rate: 0.001
   lr_schedule: null     # fixed lr by default
-  loss: "wce"           # ce | wce | focal
-  loss_weight: [1.0, 10.0]
+  loss: "ce"            # paper Eq.(16): unweighted CE (v1.1)
   gradient_clip: null
   seeds: [42, 123, 456]
 
 # ── FAR Control ──
 far:
-  calibration_source: "train_only"
-  calibration_samples: 800
+  calibration_source: "train_all_clutter"  # Eq.(15): ALL training-set clutter cells
+  calibration_samples: null                # no separate target-free calibration set
   pfa_levels: [0.0001, 0.001, 0.01]
-  method: "percentile"   # sort clutter scores, threshold at ceil(α·Nc)
+  method: "percentile"   # sort o(0) of all clutter cells, h = o_sorted[ceil(α·N_c)]
 
 # ── Evaluation ──
 eval:

@@ -1,4 +1,4 @@
-# E4-D2 (GDCM) on SDRDSP Dataset — protocol v1.1
+# E4-D2 (Delta-CS) on SDRDSP Dataset
 # Extends default.yaml with SDRDSP-specific settings.
 
 extends: default
@@ -7,14 +7,15 @@ data:
   train_file: "data/20210106155330_01_staring.mat"
   test_file: "data/20210106155432_01_staring.mat"
   normalize: "P99"
-  N: 2224                      # FULL range dimension — NO range cropping (v1.1)
-  centre_range_bin: 2083       # target range cell in the full range dimension
+  P99_scale: 3121.3     # training clutter 99th percentile amplitude
+  N: 256
+  centre_range_bin: 2083
 
 training:
   epochs: 200
   batch_size: 24
   sampling: "scr_uniform"  # equal samples per SCR level per batch
-  loss: "ce"               # UNWEIGHTED CE (paper Eq.16) — v1.1
+  loss: "ce"               # paper Eq.(16): unweighted CE (v1.1)
 
 eval:
   pdL_scr: [-24, -22, -20, -18, -16, -14]  # low SCR range for PdL

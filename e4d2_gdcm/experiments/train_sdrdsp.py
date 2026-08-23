@@ -4,7 +4,11 @@ E4-D2 with the GDCM detector. Final adopted setting: A0 = D_a only
 (log(1+|Δ|)) — simplest and most stable judgement representation.
 Variants: gdcm_a0 (final) | gdcm_g0..g4 | rdj.
 
-Protocol v1.1 (mandatory): target initial phase φ0 ~ U(-π,π) per sample.
+Protocol v1.1 (mandatory, aligned with the ST-GNN Fig.9 reproduction):
+  * target initial phase φ0 ~ U(-π,π) per sample
+  * UNWEIGHTED CE (paper Eq.16 — no class weight)
+  * FAR: sort o(0) of ALL training-set clutter cells, h = o_sorted[ceil(α_f·N_c)]
+    (Eq.15 — NO separate target-free calibration set)
 
 Usage:
     python -m e4d2_gdcm.experiments.train_sdrdsp \
@@ -30,11 +34,11 @@ from e4d2_gdcm.utils.preprocess import (
 )
 
 P = 4
-N_RANGE = 2224          # FULL range profile width — NO range cropping (protocol v1.1)
+N_RANGE = 256
 STEP = P
 PRT = 1.0 / 1600
 WAVELENGTH = 0.03
-TARGET_RANGE = 2083     # original target range cell in the FULL range dim
+TARGET_RANGE = N_RANGE // 2
 POSITIONS_PER_SAMPLE = 5
 PFA_LEVELS = [0.0001, 0.001, 0.01]
 PHI0_RNG_SEED = 777
@@ -107,19 +111,6 @@ def build_test_data(data, scr_list):
     return result
 
 
-def build_clutter_only(data, n_samples=800):
-    """Legacy: pure-clutter calibration set (kept for reference, NOT used in v1.1).
-    v1.1 FAR (paper Eq.15) sorts o(0) of ALL training-set clutter cells instead.
-    """
-    total = data.shape[0]
-    segs = []
-    for st in range(0, min(total - P, n_samples * STEP), STEP):
-        segs.append(data[st:st + P, :])
-        if len(segs) >= n_samples:
-            break
-    return np.array(segs, dtype=np.complex64)
-
-
 def process_stat(cplx_batch, preprocessor):
     d = preprocessor.transform(cplx_batch)
     return (torch.tensor(d['x_main'], dtype=torch.float32),
@@ -135,7 +126,7 @@ def train_one_seed(seed, preprocessor, X_tr, y_tr, s_tr, device, epochs, batch_s
     model = E4D2(detector=detector).to(device)
     n_params, _ = count_params(model)
     opt = optim.Adam(model.parameters(), lr=0.001)
-    crit = nn.CrossEntropyLoss()          # paper Eq.(16): UNWEIGHTED CE
+    crit = nn.CrossEntropyLoss()          # paper Eq.(16): unweighted CE
     unique_scr = np.unique(s_tr)
     scr_indices = {s: np.where(s_tr == s)[0] for s in unique_scr}
     n_per_scr = batch_size // len(unique_scr) + 1
@@ -159,12 +150,11 @@ def train_one_seed(seed, preprocessor, X_tr, y_tr, s_tr, device, epochs, batch_s
     return model, n_params
 
 
-def calibrate_from_train(model, preprocessor, X_tr, y_tr, batch_size, device,
-                         pfa_levels=PFA_LEVELS):
-    """Paper Eq.(15): sort o(0) of ALL training-set clutter cells.
+def calibrate_from_train(model, preprocessor, X_tr, y_tr, device, batch_size=24):
+    """Paper Eq.(15): sort o(0) of ALL training clutter cells.
 
-    N_c = total training clutter cells (incl. clutter cells of injected-target
-    samples); h = o_sorted[ceil(α_f·N_c)−1]. No separate target-free set.
+    N_c = total training clutter cells; h = o_sorted[ceil(α_f·N_c)].
+    No separate target-free calibration set.
     """
     model.eval()
     cc_list = []
@@ -174,27 +164,26 @@ def calibrate_from_train(model, preprocessor, X_tr, y_tr, batch_size, device,
             lo = model(*[x.to(device) for x in t])
             cs = torch.softmax(lo, 1)[:, 0].cpu().numpy()       # [b, N]
             lb = y_tr[b:b + batch_size]
-            cc_list.append(cs[lb == 0])                          # clutter cells only
+            cc_list.append(cs[lb == 0])
     cc_all = np.concatenate(cc_list)
-    sc_ = np.sort(cc_all)
-    Nc = len(sc_)
-    return {p: float(sc_[max(0, min(int(np.ceil(p * Nc)) - 1, Nc - 1))]) for p in pfa_levels}, Nc
+    sorted_cal = np.sort(cc_all)
+    Nc = len(sorted_cal)
+    thresholds = {pfa: float(sorted_cal[max(0, min(int(np.ceil(pfa * Nc)) - 1, Nc - 1))])
+                  for pfa in PFA_LEVELS}
+    return thresholds, Nc
 
 
-def evaluate(model, preprocessor, test_data, scr_list, thresholds, batch_size, device):
+def evaluate(model, preprocessor, test_data, scr_list, thresholds, device):
     from sklearn.metrics import roc_auc_score
     model.eval()
     psc = {}
     with torch.no_grad():
         for scr in scr_list:
             d = test_data[scr]
-            Xs, ys = d['X'], d['y'].flatten()
-            csl = []
-            for b0 in range(0, len(Xs), batch_size):             # batch for N=2224 GAT
-                t = process_stat(Xs[b0:b0 + batch_size], preprocessor)
-                lo = model(*[x.to(device) for x in t])
-                csl.append(torch.softmax(lo, 1)[:, 0].cpu().numpy().flatten())
-            psc[scr] = (np.concatenate(csl), ys)
+            t = process_stat(d['X'], preprocessor)
+            lo = model(*[x.to(device) for x in t])
+            cs = torch.softmax(lo, 1)[:, 0].cpu().numpy().flatten()
+            psc[scr] = (cs, d['y'].flatten())
 
     all_cs = np.concatenate([v[0] for v in psc.values()])
     all_lb = np.concatenate([v[1] for v in psc.values()])
@@ -232,18 +221,22 @@ def main():
     seeds = [int(s.strip()) for s in args.seeds.split(',')]
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
     print(f"GDCM-E4 | detector={args.detector} | device={device} | seeds={seeds} | epochs={args.epochs}")
-    print(f"Range dimension: FULL (no cropping) | target at range cell {TARGET_RANGE}")
 
-    train_raw = auto_load_mat(args.train)          # FULL range dimension
+    train_raw = auto_load_mat(args.train)
+    if train_raw.shape[1] > N_RANGE:
+        SB = 1955 - N_RANGE // 2
+        train_raw = train_raw[:, SB:SB + N_RANGE]
     test_raw = auto_load_mat(args.test)
-    N_full = train_raw.shape[1]
-    print(f"Train: {train_raw.shape}  Test: {test_raw.shape}  (N_full={N_full})")
+    if test_raw.shape[1] > N_RANGE:
+        SB = 1955 - N_RANGE // 2
+        test_raw = test_raw[:, SB:SB + N_RANGE]
 
     train_scr = list(range(-12, 15, 2))
     test_scr = list(range(-24, 15, 2))
     X_tr, y_tr, s_tr = build_dataset(train_raw, train_scr)
     test_data = build_test_data(test_raw, test_scr)
-    print(f"Train {X_tr.shape[0]} samples | Test {sum(len(v['X']) for v in test_data.values())} samples")
+    n_clutter_tr = int((y_tr == 0).sum())
+    print(f"Train {X_tr.shape[0]} samples | Test {sum(len(v['X']) for v in test_data.values())} | Train clutter cells {n_clutter_tr}")
 
     preprocessor = E4D2Preprocessor().fit(X_tr)
     print(f"P99={preprocessor.P99:.1f}")
@@ -254,15 +247,15 @@ def main():
         t0 = time.time()
         model, n_params = train_one_seed(seed, preprocessor, X_tr, y_tr, s_tr,
                                          device, args.epochs, args.batch, args.detector)
-        thresholds, Nc = calibrate_from_train(model, preprocessor, X_tr, y_tr, args.batch, device)
-        auc, multi_pfa = evaluate(model, preprocessor, test_data, test_scr, thresholds,
-                                  args.batch, device)
+        thresholds, Nc = calibrate_from_train(model, preprocessor, X_tr, y_tr,
+                                              device, batch_size=args.batch)
+        auc, multi_pfa = evaluate(model, preprocessor, test_data, test_scr, thresholds, device)
         all_models[seed] = model
         all_results.append({'seed': seed, 'auc': auc,
                             'pdL': multi_pfa[0.001]['pdL'],
                             **{f'pdL_pfa{int(10000*p)}': v['pdL'] for p, v in multi_pfa.items()},
                             'pd_scr': {str(s): v['pd_per_scr'] for s, v in multi_pfa.items()}})
-        print(f"  Seed {seed}: AUC={auc:.4f}  PdL@1e-3={multi_pfa[0.001]['pdL']:.4f}  (N_c={Nc:,})  ({time.time()-t0:.0f}s)")
+        print(f"  Seed {seed}: AUC={auc:.4f}  PdL@1e-3={multi_pfa[0.001]['pdL']:.4f}  ({time.time()-t0:.0f}s)")
 
     aucs = [r['auc'] for r in all_results]
     print(f"\nAUC: {np.mean(aucs):.4f} ± {np.std(aucs):.4f}  |  Params: {n_params:,}")
@@ -271,7 +264,6 @@ def main():
     torch.save({'model_state_dict': all_models[seeds[int(np.argmax(aucs))]].state_dict(),
                 'preprocessor_P99': preprocessor.P99,
                 'detector': args.detector,
-                'N': int(N_full),
                 'auc_mean': float(np.mean(aucs)),
                 'all_results': all_results}, args.output)
     print(f"Saved: {args.output}")

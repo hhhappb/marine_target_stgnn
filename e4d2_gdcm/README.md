@@ -93,16 +93,18 @@ e4d2_gdcm/
 └── REMOVED.md              # Old code cleanup record
 ```
 
-## Key Results (200 epochs, 3 seeds, protocol v1.1, all weighted CE)
+## Key Results (200 epochs, 3 seeds)
 
-| Model | AUC | PdL@1e-3 | Params |
-|-------|:---:|:---:|:---:|
-| G0 E4-D2-RDJ (baseline) | 0.9812 | 0.540 | 4,442,338 |
-| **A0 D_a only (final default)** | **0.9842±0.002** | **0.600** | 4,425,954 |
-| G3 GroupDir + Log | 0.9830 | 0.600 | 4,442,338 |
+**Protocol v1.1**: φ0~U(-π,π) per sample; unweighted CE (paper Eq.16); FAR via
+sorting ALL training clutter cells, h = o_sorted[ceil(α_f·N_c)] (Eq.15).
 
-**A0 (channel-wise log magnitude) is the final adopted setting**: it achieves
-the highest AUC (0.9842) with the **smallest seed variance (±0.002)**, and
-the best PdL at 1e-3/1e-2 (0.600 / 0.718, tied with G3) — the simplest and
-most stable judgement representation. Full ablation in
-`reports/GDCM_WHY_DS_REPORT.md` and `reports/GDCM_DETECTOR_REPORT.md`.
+**v1.1 实测结果（GDCM-A0，256-bin 裁剪，N_c=6,093,276）:**
+
+| Model | AUC | PdL@1e-4 | PdL@1e-3 | PdL@1e-2 | Params |
+|-------|:---:|:---:|:---:|:---:|:---:|
+| **E4-D2-GDCM-A0 (final)** | **0.9666±0.005** | **0.484** | **0.558** | **0.627** | 4,425,954 |
+| ST-GNN (Fig.9 复现) | 0.9852±0.010 | 0.228 | 0.370 | 0.616 | 5,066,274 |
+
+*旧协议（weighted CE + 800 校准样本）历史结果见 `reports/GDCM_WHY_DS_REPORT.md`。*
+
+**分析**：v1.1（普通 CE + 全量杂波 FAR）下，GDCM-A0 的 AUC 低于 ST-GNN，但在低 SCR 段的 Pd 显著更高（如 PFA=1e-4 时 Pd(-24dB)=0.194 vs 0.000、Pd(-20dB)=0.453 vs 0.011），且 seed 方差更小（±0.005 vs ±0.010）。ST-GNN 依靠 SCR≥-18dB 后更陡峭的 Pd 曲线取得更高 AUC。完整对比见 `reports/V11_GDCM_A0_VS_STGNN.md`。
