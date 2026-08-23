@@ -1,0 +1,41 @@
+# E4 Detector Head Optimization Suite
+# Fixed E4Backbone, varying detector head:
+#
+#   D0: Original ST-GNN Conv1d(1216→512→2)
+#   D1: Conv1d(1216→512→2) + LayerNorm
+#   D2: Local-CFAR (3× DepthwiseConv k=3/7/15)  ← best
+#   D3: D2 + SE attention
+#   D4: Conv1d(1216→256→128→2) deeper MLP
+#   D5: D2 with dilated conv (d=1,2,4)
+#   D6: D2 + margin loss
+
+extends: ../sdrdsp.yaml
+
+suite:
+  name: "e4_detector_head"
+  variants:
+    - name: "E4-D0"
+      detector: "d0"
+      description: "Original: Conv1d(1216→512→2)"
+    - name: "E4-D1"
+      detector: "d1"
+      description: "D0 + LayerNorm"
+    - name: "E4-D2"
+      detector: "d2"
+      description: "Local-CFAR: 3× DepthwiseConv(k=3/7/15) ← Best"
+    - name: "E4-D3"
+      detector: "d3"
+      description: "D2 + SE channel attention"
+    - name: "E4-D4"
+      detector: "d4"
+      description: "Deeper MLP: 1216→256→128→2"
+    - name: "E4-D5"
+      detector: "d5"
+      description: "D2 with dilated conv (d=1,2,4)"
+    - name: "E4-D6"
+      detector: "d6"
+      description: "D2 + margin-based loss"
+
+training:
+  seeds: [42, 123, 456]
+  seeds_10: [42, 123, 456, 789, 101, 202, 303, 404, 505, 606]

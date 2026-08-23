@@ -1,0 +1,24 @@
+# E4-D2 on IPIX Dartmouth Dataset
+# Extends default.yaml with IPIX-specific settings.
+
+extends: default
+
+data:
+  source: "ipix_dartmouth"
+  processed_dir: "ipix_dartmouth/processed/window4_stride4_primary"
+  N: 14                 # IPIX has 14 range bins
+  P: 4                  # CPI window size
+  polarization: "hh"
+  normalize: "auto"     # IPIX data is pre-normalized (I/Q demean + phase imbalance correction)
+  train_fraction: 0.6   # 60% sweeps for training per file
+  target_policy: "primary"  # only primary target bin as positive label
+
+training:
+  epochs: 100
+  batch_size: 24
+  max_train_samples: 20000   # subsample for speed
+  sampling: "random"         # no SCR levels; real targets
+  loss: "ce"                 # unweighted CE (consistent with ST-GNN paper)
+
+eval:
+  no_scr_injection: true     # real targets, evaluate per-range-bin Pd

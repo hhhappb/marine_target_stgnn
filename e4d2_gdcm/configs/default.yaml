@@ -1,0 +1,58 @@
+# E4-D2 (GDCM) Default Configuration
+# Shared hyperparameters across all experiments.
+
+# ── Data ──
+data:
+  P: 4                 # pulses per CPI
+  N: 256               # range bins
+  step: 4              # sliding window stride (non-overlapping)
+  pulse_offset: 1955   # original centre pulse index
+  prt: 0.000625        # pulse repetition interval (1/1600) s
+  wavelength: 0.03     # radar wavelength (m)
+
+# ── Target Injection (protocol v1.1) ──
+target:
+  phi0: "random"       # φ0 ~ U(-π,π) per sample — MANDATORY, no absolute-phase shortcut
+  positions_per_sample: 5
+  ref_window: 20       # reference cells for clutter power
+  train_scr: [-12, 15] # dB range, step 2
+  test_scr: [-24, 15]  # dB range, step 2
+  test_speed: 0.4      # m/s
+  test_position: 128   # centre of cropped window (original 2083)
+
+# ── Model ──
+model:
+  name: "e4d2_gdcm"
+  detector: "gdcm_a0"  # DEFAULT (final): A0 = D_a only log(1+|Δ|) | rdj | gdcm_g0..g4
+  input_channels:
+    main: 4            # I/P99, Q/P99, PL_raw, RPH/P99
+    phase_cell: 3
+    amp_map: 1
+    amp_cell: 4
+    global: 6
+  backbone_output: 1216
+  num_parameters: ~4.43M
+
+# ── Training ──
+training:
+  epochs: 200
+  batch_size: 24
+  optimizer: "adam"
+  learning_rate: 0.001
+  lr_schedule: null     # fixed lr by default
+  loss: "wce"           # ce | wce | focal
+  loss_weight: [1.0, 10.0]
+  gradient_clip: null
+  seeds: [42, 123, 456]
+
+# ── FAR Control ──
+far:
+  calibration_source: "train_only"
+  calibration_samples: 800
+  pfa_levels: [0.0001, 0.001, 0.01]
+  method: "percentile"   # sort clutter scores, threshold at ceil(α·Nc)
+
+# ── Evaluation ──
+eval:
+  metrics: [auc, pd_per_scr, pdL, pdH, actual_pfa]
+  low_scr_range: [-24, -14]  # for PdL
