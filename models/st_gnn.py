@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 
 
 class TFE(nn.Module):
@@ -33,8 +32,6 @@ class STGNNDetector(nn.Module):
         self.tfe2 = TFE(in_channels=512, out_channels=1024)
 
         self.detector = Detector(1024, 512)
-        
-        self.far_controller = FARController()
 
     def forward(self, E, return_features=False):
         E_real = E.real
@@ -55,7 +52,9 @@ class STGNNDetector(nn.Module):
         sfe2_out = self.sfe2(tfe1_list)
         tfe2_out = self.tfe2(sfe2_out)
 
-        temporal_features = tfe2_out.squeeze(2)
+        # P=4 时第二级 TFE 的时间长度为 1，此处与原 squeeze(2) 完全等价。
+        # 对更长观察窗，汇聚剩余时间位置以保持检测头输入为 [B, 1024, N]。
+        temporal_features = tfe2_out.mean(dim=2)
 
         per_range_bin_logits = self.detector(temporal_features)
         sample_level_probs, _ = self.detector.predict_sample_level(per_range_bin_logits)
@@ -64,32 +63,6 @@ class STGNNDetector(nn.Module):
             return sample_level_probs, per_range_bin_logits, F_features, tfe2_out
         return sample_level_probs
     
-    def predict_with_far_control(self, E, target_pfa=0.001, calibration_data=None):
-        """
-        带虚警率控制的预测，仅在测试阶段使用
-        
-        :param E: 输入数据，形状 [B, P, N]
-        :param target_pfa: 目标虚警率 α_f
-        :param calibration_data: 用于校准的纯杂波样本（可选），形状 [B_c, P, N]
-        :return: 预测结果（二值）、检测输出、阈值
-        """
-        self.eval()
-        with torch.no_grad():
-            _, per_range_bin_outputs, _, _ = self.forward(E, return_features=True)
-            probs = torch.softmax(per_range_bin_outputs, dim=1)
-            
-            if calibration_data is not None:
-                _, calib_outputs, _, _ = self.forward(calibration_data, return_features=True)
-                calib_probs = torch.softmax(calib_outputs, dim=1)
-                threshold = self.far_controller.calibrate(calib_probs.cpu().numpy(), target_pfa)
-            else:
-                threshold = self.far_controller.default_threshold(target_pfa)
-            
-            predictions = self.far_controller.decide(probs, threshold)
-            
-            return predictions, probs, threshold
-
-
 class GraphAttentionLayer(nn.Module):
     def __init__(self, in_features, out_features):
         super(GraphAttentionLayer, self).__init__()
@@ -183,82 +156,3 @@ class Detector(nn.Module):
         max_target_prob, _ = torch.max(target_probs, dim=1)
         sample_level_probs = torch.stack([1 - max_target_prob, max_target_prob], dim=1)
         return sample_level_probs, per_range_bin_probs
-
-
-class FARController(nn.Module):
-    """
-    虚警率控制器 (FAR Controller)
-    根据期望虚警率设置检测阈值，仅测试阶段使用，不参与训练
-    
-    论文算法：
-    1. 取训练集中所有杂波样本的 o(0)（杂波概率）
-    2. 升序排列：o = [o(0)_1, o(0)_2, ..., o(0)_{N_c}]
-    3. 根据期望虚警率 α_f 计算阈值：h = o(⌈α_f * N_c⌉)
-    4. 测试时判决：o(0) > h → 杂波；o(0) ≤ h → 目标
-    """
-    
-    def __init__(self):
-        super(FARController, self).__init__()
-    
-    def calculate_threshold(self, clutter_probabilities, target_pfa):
-        """
-        根据杂波样本的杂波概率计算检测阈值
-        
-        :param clutter_probabilities: 杂波样本的杂波概率 o(0)，形状 [N_c]
-        :param target_pfa: 目标虚警率 α_f
-        :return: 检测阈值 h
-        """
-        if isinstance(clutter_probabilities, torch.Tensor):
-            o = clutter_probabilities.cpu().numpy()
-        else:
-            o = np.array(clutter_probabilities)
-        
-        o = np.sort(o)
-        N_c = len(o)
-        
-        if N_c == 0:
-            return self.default_threshold(target_pfa)
-        
-        threshold_idx = int(np.ceil(target_pfa * N_c)) - 1
-        threshold_idx = max(0, min(threshold_idx, N_c - 1))
-        h = o[threshold_idx]
-        
-        return h
-    
-    def default_threshold(self, target_pfa):
-        """
-        使用默认方法计算阈值（当没有校准数据时）
-        
-        :param target_pfa: 目标虚警率
-        :return: 检测阈值
-        """
-        return target_pfa
-    
-    def calibrate(self, clutter_scores, target_pfa=0.001):
-        """
-        校准方法：使用纯杂波数据计算阈值
-        
-        :param clutter_scores: 纯杂波样本的预测结果（形状 [B, 2, N] 或 [B, 2]）
-        :param target_pfa: 目标虚警率
-        :return: 检测阈值
-        """
-        if clutter_scores.ndim == 3:
-            clutter_probs = clutter_scores[:, 0, :].flatten()
-        elif clutter_scores.ndim == 2:
-            clutter_probs = clutter_scores[:, 0]
-        else:
-            clutter_probs = clutter_scores
-        
-        return self.calculate_threshold(clutter_probs, target_pfa)
-    
-    def decide(self, detection_output, threshold):
-        """
-        根据检测输出和阈值进行判决
-        
-        :param detection_output: Ds的输出，形状 [B, 2, N]，其中第0通道是杂波概率 o(0)
-        :param threshold: 检测阈值 h
-        :return: 判决结果，形状 [B, N]，0=杂波，1=目标
-        """
-        clutter_probs = detection_output[:, 0, :]
-        decisions = (clutter_probs <= threshold).float()
-        return decisions

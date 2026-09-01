@@ -1,0 +1,29 @@
+experiment:
+  protocol_family: diagnostic
+  protocol_version: ipix_p16_complex_evidence_residual_tfe_both_v1
+  question: P=16 下完整替换 TFE1/TFE2 的复数慢时间证据是否改善 IPIX 检测
+paths:
+  data_dir: datasets/ipix_dartmouth/processed/window16_stride4_related_official_ipixload_auto_double
+  save_dir: logs/training/diagnostic/ipix_p16_complex_evidence_residual_tfe_both/active_label01_vv
+dataset:
+  type: ipix_window
+  data_dir: datasets/ipix_dartmouth/processed/window16_stride4_related_official_ipixload_auto_double
+  expected_processing_mode: official_ipixload_auto
+  sources: [19931107_135603_starea]
+  polarizations: [vv]
+  train_label_policy: primary_strict
+  evaluation_label_policy: primary_strict
+ipix: {polarizations: [vv]}
+model: {name: modular_stgnn, pulses: 16, range_cells: 14}
+radar_features: {type: real_imag, hidden_channels: 32, out_channels: 64}
+spatial_graph: {type: original_stfe, stage1_out_channels: 128, stage2_out_channels: 512}
+temporal: {type: stgnn_tfe, stage1_out_channels: 256, stage2_out_channels: 1024, out_channels: 1024}
+temporal1: {type: complex_evidence_residual_tfe, stage1_out_channels: 256, eps: 1.0e-6, evidence_mode: normal, collect_diagnostics: true}
+temporal2: {type: complex_evidence_residual_tfe, stage2_out_channels: 1024, out_channels: 1024, eps: 1.0e-6, evidence_mode: normal, collect_diagnostics: true}
+clutter_gate: {enabled: false}
+detection_head: {hidden_channels: 512}
+loss: {type: cross_entropy, use_class_weights: false}
+diagnostics: {temporal: true}
+train:
+  {epochs: 60, batch_size: 32, gradient_accumulation_steps: 16, learning_rate: 0.001, optimizer: adam, weight_decay: 0.0, scheduler: none, grad_clip: null, num_workers: 0, seed: 42}
+eval: {protocol: per_file_pol, threshold_source: train_clutter, pfa_values: [0.001]}

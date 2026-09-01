@@ -29,7 +29,7 @@ def _small_stgnn_config(
     }
     return {
         "model": {
-            "name": "sfe_replacement_stgnn",
+            "name": "modular_stgnn",
             "pulses": pulses,
             "range_cells": 14,
         },

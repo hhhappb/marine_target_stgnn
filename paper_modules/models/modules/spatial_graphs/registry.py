@@ -14,7 +14,11 @@ def build_spatial_graph(config: dict[str, object], in_channels: int, out_channel
     if graph_type == "local_3":
         return LocalRangeGraph(in_channels, out_channels, radius=1)
     if graph_type == "original_stfe":
-        return OriginalSTFEGraph(in_channels, out_channels)
+        return OriginalSTFEGraph(
+            in_channels,
+            out_channels,
+            dropout=float(config.get("dropout", 0.1)),
+        )
     if graph_type == "local_k":
         return LocalRangeGraph(in_channels, out_channels, radius=int(config.get("k", 1)))
     if graph_type == "pure_dynamic":

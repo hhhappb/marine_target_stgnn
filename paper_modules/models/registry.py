@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import torch.nn as nn
 
+from .modular_stgnn import ModularSTGNN
 from .original_stgnn import OriginalSTGNN
-from .sfe_replacement_stgnn import SFEReplacementSTGNN
 
 
 def build_model(config: dict[str, object]) -> nn.Module:
@@ -13,6 +13,6 @@ def build_model(config: dict[str, object]) -> nn.Module:
     name = str(model_cfg["name"])
     if name == "original_stgnn":
         return OriginalSTGNN(config)
-    if name == "sfe_replacement_stgnn":
-        return SFEReplacementSTGNN(config)
+    if name == "modular_stgnn":
+        return ModularSTGNN(config)
     raise ValueError(f"Unknown paper model: {name}")

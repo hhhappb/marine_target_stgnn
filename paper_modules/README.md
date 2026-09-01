@@ -10,7 +10,7 @@ Feature -> SFE1 -> TFE1 -> SFE2 -> TFE2 -> DetectionHead
 
 | 位置 | 文件 | 作用 |
 |---|---|---|
-| SFE 替换骨架 | `models/sfe_replacement_stgnn.py` | 保持两级 SFE/TFE 顺序，只替换 SFE 实现 |
+| 模块化替换骨架 | `models/modular_stgnn.py` | 保持论文顺序，独立配置 SFE1/TFE1/SFE2/TFE2 |
 | 原 SFE 复现 | `models/modules/spatial_graphs/original_stfe.py` | 固定相邻距离图 + additive GAT |
 | 空间图候选 | `models/modules/spatial_graphs/` | 作为 SFE1/SFE2 的替换实现 |
 | 输入特征候选 | `models/modules/radar_features/` | 只能在论文 FT/输入特征位置做受控替换 |

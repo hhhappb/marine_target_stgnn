@@ -7,7 +7,7 @@ dataset:
   protocol: sdrdsp_fig9_local_crop_v2
   normalization: none
 model:
-  name: sfe_replacement_stgnn
+  name: modular_stgnn
   pulses: 32
   range_cells: 256
 radar_features:

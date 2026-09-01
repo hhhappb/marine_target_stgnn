@@ -12,7 +12,9 @@ class TemporalModule(nn.Module):
         super().__init__()
         self.impl = build_temporal_module(config, in_channels, out_channels)
 
-    def forward(self, x):
+    def forward(self, x, *, raw_echoes=None):
+        if bool(getattr(self.impl, "requires_raw_echoes", False)):
+            return self.impl(x, raw_echoes=raw_echoes)
         return self.impl(x)
 
     def get_diagnostics(self) -> dict[str, float]:

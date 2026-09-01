@@ -13,7 +13,7 @@ ipix:
   polarizations: [vh]
 
 model:
-  name: sfe_replacement_stgnn
+  name: modular_stgnn
   pulses: 4
   range_cells: 14
 

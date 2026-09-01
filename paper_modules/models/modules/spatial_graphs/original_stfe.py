@@ -31,9 +31,10 @@ class OriginalSTFEGraph(nn.Module):
         if channels != self.in_channels:
             raise ValueError(f"OriginalSTFEGraph 通道数不匹配：期望 {self.in_channels}，实际 {channels}。")
 
-        h = x.permute(0, 2, 1, 3).reshape(bsz * pulses, channels, ranges)
-        out = F.relu(self._gat(h, ranges))
-        return out.reshape(bsz, pulses, self.out_channels, ranges).permute(0, 2, 1, 3).contiguous()
+        outputs = []
+        for pulse in range(pulses):
+            outputs.append(F.relu(self._gat(x[:, :, pulse, :], ranges)))
+        return torch.stack(outputs, dim=2)
 
     def _gat(self, h: torch.Tensor, ranges: int) -> torch.Tensor:
         batch = h.size(0)

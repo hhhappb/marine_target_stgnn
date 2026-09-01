@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import torch.nn as nn
 
+from .complex_evidence_residual_tfe import ComplexEvidenceResidualTFE
+from .complex_evidence_tfe import ComplexEvidenceTFE
 from .diff_tfe import DiffTFE
 from .fixed_uniform_tfe import FixedUniformTemporalMixerTFE
 from .lag_aware_anti_alias_tfe import LagAwareAntiAliasTFE
@@ -14,6 +16,24 @@ def build_temporal_module(config: dict[str, object], in_channels: int, out_chann
     temporal_type = str(config.get("type", "stgnn_tfe"))
     if temporal_type == "stgnn_tfe":
         return STGNNTemporalGate(in_channels, out_channels)
+    if temporal_type == "complex_evidence_residual_tfe":
+        return ComplexEvidenceResidualTFE(
+            in_channels,
+            out_channels,
+            eps=float(config.get("eps", 1e-6)),
+            evidence_mode=str(config.get("evidence_mode", "normal")),
+            collect_diagnostics=bool(config.get("collect_diagnostics", False)),
+        )
+    if temporal_type == "complex_evidence_tfe":
+        return ComplexEvidenceTFE(
+            in_channels,
+            out_channels,
+            beta_max=float(config.get("beta_max", 0.1)),
+            eps=float(config.get("eps", 1e-6)),
+            use_modulation=bool(config.get("use_modulation", True)),
+            evidence_mode=str(config.get("evidence_mode", "normal")),
+            collect_diagnostics=bool(config.get("collect_diagnostics", False)),
+        )
     if temporal_type == "diff_tfe":
         return DiffTFE(
             in_channels,
@@ -63,6 +83,8 @@ def build_temporal_module(config: dict[str, object], in_channels: int, out_chann
 
 __all__ = [
     "build_temporal_module",
+    "ComplexEvidenceResidualTFE",
+    "ComplexEvidenceTFE",
     "DiffTFE",
     "FixedUniformTemporalMixerTFE",
     "LagAwareAntiAliasTFE",

@@ -12,7 +12,7 @@ OUTPUT_CONFIG_ROOT = ROOT / "paper_modules/configs/per_file_fig7_primary_strict_
 SUITE_PATH = ROOT / "paper_modules/configs/suites/ipix_fig7_primary_strict_module_ablation_60ep.yaml"
 
 COMMON_MODEL = {
-    "name": "sfe_replacement_stgnn",
+    "name": "modular_stgnn",
     "pulses": 4,
     "range_cells": 14,
 }
