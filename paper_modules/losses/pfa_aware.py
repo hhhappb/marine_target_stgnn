@@ -9,9 +9,15 @@ from .cross_entropy import CrossEntropyDetectionLoss
 class PfaAwareDetectionLoss(nn.Module):
     """训练目标思路 1：惩罚杂波样本中目标概率最高的尾部，贴近低虚警检测目标。"""
 
-    def __init__(self, class_weights: torch.Tensor | None = None, tail_fraction: float = 0.01, tail_weight: float = 0.1):
+    def __init__(
+        self,
+        class_weights: torch.Tensor | None = None,
+        tail_fraction: float = 0.01,
+        tail_weight: float = 0.1,
+        ignore_index: int = -100,
+    ):
         super().__init__()
-        self.ce = CrossEntropyDetectionLoss(class_weights)
+        self.ce = CrossEntropyDetectionLoss(class_weights, ignore_index=ignore_index)
         self.tail_fraction = float(tail_fraction)
         self.tail_weight = float(tail_weight)
 

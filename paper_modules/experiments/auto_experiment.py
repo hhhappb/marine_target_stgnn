@@ -315,7 +315,7 @@ def config_metadata(config: dict[str, Any]) -> dict[str, Any]:
         "polarizations": pols,
         "polarization": pols[0] if len(pols) == 1 else "",
         "eval_protocol": str(eval_cfg.get("protocol", "per_file_pol")),
-        "threshold_source": str(eval_cfg.get("threshold_source", "test_diagnostic_current_eval")),
+        "threshold_source": str(eval_cfg.get("threshold_source", "")),
         "train_window_fraction_range": json.dumps(dataset_cfg.get("train_window_fraction_range")),
         "calibration_window_fraction_range": json.dumps(
             dataset_cfg.get("calibration_window_fraction_range")
@@ -411,7 +411,7 @@ def read_metrics(results_path: Path, target_pfa: float | None) -> dict[str, Any]
     return {
         "results_path": str(results_path),
         "target_pfa": float(key),
-        "threshold_source": str(payload.get("threshold_source", "test_diagnostic_current_eval")),
+        "threshold_source": str(payload.get("threshold_source", "")),
         "threshold": float(result["threshold"]),
         "PD": float(result["PD"]),
         "PF": float(result["PF"]),
@@ -475,7 +475,7 @@ def write_summary(path: Path, rows: list[dict[str, Any]], target_pfa: float | No
         "",
         f"- target_pfa: {target_pfa if target_pfa is not None else 0.001}",
         f"- threshold_source: {', '.join(threshold_sources) if threshold_sources else 'unknown'}",
-        "- 说明：train_clutter 使用训练集杂波分数定阈值；calibration_clutter 使用与训练段不重叠的独立校准段定阈值；test_diagnostic_current_eval 使用测试集杂波分数定阈值，只适合作为模块筛选诊断。",
+        "- 说明：阈值只能来自训练集杂波，或来自与训练段和测试段均不重叠的独立校准集杂波。",
         "",
     ]
     lines.extend(

@@ -10,12 +10,14 @@ from .pfa_aware import PfaAwareDetectionLoss
 def build_loss(config: dict[str, object], class_weights: torch.Tensor | None = None) -> nn.Module:
     loss_cfg = config.get("loss", {})
     loss_type = str(loss_cfg.get("type", "cross_entropy"))
+    ignore_index = int(loss_cfg.get("ignore_index", -100))
     if loss_type == "cross_entropy":
-        return CrossEntropyDetectionLoss(class_weights)
+        return CrossEntropyDetectionLoss(class_weights, ignore_index=ignore_index)
     if loss_type == "pfa_aware":
         return PfaAwareDetectionLoss(
             class_weights,
             tail_fraction=float(loss_cfg.get("tail_fraction", 0.01)),
             tail_weight=float(loss_cfg.get("tail_weight", 0.1)),
+            ignore_index=ignore_index,
         )
     raise ValueError(f"Unknown loss type: {loss_type}")

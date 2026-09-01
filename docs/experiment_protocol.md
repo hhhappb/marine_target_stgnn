@@ -16,7 +16,7 @@
 默认 baseline 是当前 IPIX 预处理后的 Raw I/Q + ST-GNN：
 
 ```text
-data_dir = datasets/ipix_dartmouth/processed/window4_stride4_related
+data_dir = datasets/ipix_dartmouth/processed/window4_stride4_related_official_ipixload_auto_double
 input = complex E [B, P=4, N=14]
 feature = [I, Q]
 label = y_range
@@ -57,16 +57,15 @@ o0 <= threshold -> target
 o0 >  threshold -> clutter
 ```
 
-正式结果的阈值来源优先级：
+阈值只允许来自：
 
 1. 训练集杂波样本；
-2. 独立校准集杂波样本；
-3. 仅用于诊断的测试集杂波样本。
+2. 与训练集和测试集均不重叠的独立校准集杂波样本。
 
-第三种不能写成正式性能结论。任何报告都必须写明：
+禁止读取测试标签或测试杂波分布来选择、调整或匹配阈值，包括诊断、消融、模块筛选和结果归因。任何报告都必须写明：
 
 ```text
-threshold_source = train | calibration | test_diagnostic
+threshold_source = train | calibration
 target_pfa = ...
 actual_pf = ...
 num_clutter_bins_for_threshold = ...

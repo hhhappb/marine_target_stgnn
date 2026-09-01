@@ -7,9 +7,9 @@ import torch.nn as nn
 class CrossEntropyDetectionLoss(nn.Module):
     """训练目标基线：标准逐距离单元交叉熵。"""
 
-    def __init__(self, class_weights: torch.Tensor | None = None):
+    def __init__(self, class_weights: torch.Tensor | None = None, ignore_index: int = -100):
         super().__init__()
-        self.loss = nn.CrossEntropyLoss(weight=class_weights)
+        self.loss = nn.CrossEntropyLoss(weight=class_weights, ignore_index=int(ignore_index))
 
     def forward(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         if logits.dim() != 3 or labels.dim() != 2:

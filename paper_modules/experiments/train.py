@@ -251,7 +251,7 @@ def evaluate_files(
     pfa_values: list[float],
     max_windows_per_file: int | None = None,
     threshold_files: list[Path] | None = None,
-    threshold_source: str = "test_diagnostic_current_eval",
+    threshold_source: str | None = None,
     threshold_window_fraction_range: list[float] | tuple[float, float] | None = None,
     label_policy: str = "stored",
     secondary_echo_policy: str = "stored",
@@ -260,6 +260,17 @@ def evaluate_files(
 ) -> dict[str, object]:
     model.eval()
     import numpy as np
+
+    allowed_threshold_sources = {"train_clutter", "calibration_clutter"}
+    if threshold_source not in allowed_threshold_sources:
+        raise ValueError(
+            "threshold_source 必须显式设置为 train_clutter 或 calibration_clutter，"
+            f"实际为 {threshold_source!r}。"
+        )
+    if threshold_files is None:
+        raise ValueError(f"threshold_source={threshold_source} 需要提供 threshold_files。")
+    if threshold_source == "calibration_clutter" and threshold_window_fraction_range is None:
+        raise ValueError("threshold_source=calibration_clutter 需要 calibration_window_fraction_range。")
 
     eval_rng = np.random.default_rng(seed)
     threshold_rng = np.random.default_rng(seed)
@@ -274,28 +285,18 @@ def evaluate_files(
         secondary_echo_policy=secondary_echo_policy,
     )
 
-    if threshold_source == "test_diagnostic_current_eval":
-        threshold_clutter = eval_clutter
-        num_threshold_files = len(records)
-    elif threshold_source in {"train_clutter", "calibration_clutter"}:
-        if threshold_files is None:
-            raise ValueError(f"threshold_source={threshold_source} 需要提供 threshold_files。")
-        if threshold_source == "calibration_clutter" and threshold_window_fraction_range is None:
-            raise ValueError("threshold_source=calibration_clutter 需要 calibration_window_fraction_range。")
-        threshold_records, threshold_clutter = collect_file_scores(
-            model,
-            threshold_files,
-            batch_size,
-            device,
-            threshold_rng,
-            max_total_windows=max_threshold_windows,
-            window_fraction_range=threshold_window_fraction_range,
-            label_policy=label_policy,
-            secondary_echo_policy=secondary_echo_policy,
-        )
-        num_threshold_files = len(threshold_records)
-    else:
-        raise ValueError(f"未知 threshold_source: {threshold_source}")
+    threshold_records, threshold_clutter = collect_file_scores(
+        model,
+        threshold_files,
+        batch_size,
+        device,
+        threshold_rng,
+        max_total_windows=max_threshold_windows,
+        window_fraction_range=threshold_window_fraction_range,
+        label_policy=label_policy,
+        secondary_echo_policy=secondary_echo_policy,
+    )
+    num_threshold_files = len(threshold_records)
 
     num_target_bins = int(sum(np.count_nonzero(item["labels"] == 1) for item in records))
     num_ignore_bins = int(
@@ -587,6 +588,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument(
+        "--temporal-evidence-mode",
+        choices=["normal", "off", "shuffle"],
+        default=None,
+        help="同时设置 TFE1/TFE2 复数证据模块的利用诊断模式。",
+    )
     parser.add_argument("--gradient-accumulation-steps", type=int, default=None)
     parser.add_argument("--auto-batch-probe", action="store_true")
     parser.add_argument(
@@ -617,6 +624,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
+    if args.temporal_evidence_mode is not None:
+        for stage in ("temporal1", "temporal2"):
+            config.setdefault(stage, {})["evidence_mode"] = (
+                args.temporal_evidence_mode
+            )
     if args.save_dir is not None:
         config.setdefault("paths", {})["save_dir"] = str(args.save_dir)
     if args.deterministic:
@@ -817,7 +829,7 @@ def main() -> None:
             get_config_value(config, "eval.pfa_values"),
             max_windows_per_file=args.max_test_windows_per_file,
             threshold_files=train_files,
-            threshold_source=str(config.get("eval", {}).get("threshold_source", "test_diagnostic_current_eval")),
+            threshold_source=str(config.get("eval", {}).get("threshold_source", "")),
             threshold_window_fraction_range=(
                 dataset_cfg.get("calibration_window_fraction_range")
                 if str(config.get("eval", {}).get("threshold_source")) == "calibration_clutter"
