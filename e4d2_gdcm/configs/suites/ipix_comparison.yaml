@@ -1,0 +1,19 @@
+# ST-GNN vs E4-D2 Comparison on IPIX Dartmouth
+# Both models trained on identical data splits.
+
+extends: ../ipix.yaml
+
+suite:
+  name: "ipix_comparison"
+  variants:
+    - name: "ST-GNN-2ch"
+      model: "stgnn"
+      input_channels: 2    # I/Q only
+      description: "Baseline: 2-channel I/Q input"
+    - name: "E4-D2"
+      model: "e4d2"
+      input_channels: "full"  # 4+3+1+4+6 multimodal
+      description: "CVOCA-Fusion ST-GNN with Local-CFAR head"
+
+training:
+  seeds: [42, 123, 456]

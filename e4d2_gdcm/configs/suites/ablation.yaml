@@ -1,0 +1,29 @@
+# E4 Ablation Suite
+# Four variants to isolate CVOCA contributions:
+#
+#   E4          : Full CVOCA (A · exp(jθ) + complex conv fusion)
+#   E4-noAmp    : A = 1 (constant amplitude → no amplitude modulation)
+#   E4-randomAmp: Shuffle amplitude branch–sample correspondence
+#   E4-noCC     : A·cosθ, A·sinθ → concat (no complex-valued convolution)
+
+extends: ../sdrdsp.yaml
+
+suite:
+  name: "e4_ablation"
+  variants:
+    - name: "E4"
+      cvoca_mode: "full"
+      description: "Full CVOCA: A·exp(jθ) + complex conv"
+    - name: "E4-noAmp"
+      cvoca_mode: "constant_amplitude"
+      description: "A = 1 (no amplitude modulation)"
+    - name: "E4-randomAmp"
+      cvoca_mode: "shuffled_amplitude"
+      description: "Shuffle amplitude-to-sample mapping"
+    - name: "E4-noCC"
+      cvoca_mode: "no_complex_conv"
+      description: "A·cosθ, A·sinθ concatenated (no complex conv)"
+
+training:
+  seeds: [42, 123, 456]   # 3 seeds for main ablation
+  seeds_10: [42, 123, 456, 789, 101, 202, 303, 404, 505, 606]  # 10 seeds for extended
