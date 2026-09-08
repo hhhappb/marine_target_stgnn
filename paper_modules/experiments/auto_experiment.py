@@ -171,7 +171,14 @@ def validate_configs(configs: list[Path], args: argparse.Namespace) -> None:
             label = f"{config_path.name} seed{seed}"
             if meta["dataset_type"] != "ipix_window":
                 errors.append(f"{label}: dataset.type 必须是 ipix_window。")
-            if len(meta["sources"]) != 1:
+            if meta["require_disjoint_train_test_sources"]:
+                if len(meta["train_sources"]) != 1 or len(meta["test_sources"]) != 1:
+                    errors.append(
+                        f"{label}: 跨文件配置必须各声明 1 个 train_sources/test_sources。"
+                    )
+                elif meta["train_sources"][0] == meta["test_sources"][0]:
+                    errors.append(f"{label}: 跨文件配置的训练/测试 source 不得相同。")
+            elif len(meta["sources"]) != 1:
                 errors.append(f"{label}: per-file 配置必须且只能声明 1 个 dataset.sources。")
             if len(meta["polarizations"]) != 1:
                 errors.append(f"{label}: per-file 配置必须且只能声明 1 个 dataset.polarizations。")
@@ -195,8 +202,10 @@ def validate_configs(configs: list[Path], args: argparse.Namespace) -> None:
 
     pairs: dict[tuple[str, str, int], list[dict[str, Any]]] = {}
     for row in rows:
-        if len(row["sources"]) == 1 and len(row["polarizations"]) == 1:
-            pairs.setdefault((row["sources"][0], row["polarizations"][0], int(row["seed"])), []).append(row)
+        if row["source_unit"] and len(row["polarizations"]) == 1:
+            pairs.setdefault(
+                (row["source_unit"], row["polarizations"][0], int(row["seed"])), []
+            ).append(row)
 
     for pair_key, pair_rows in sorted(pairs.items()):
         baseline_rows = [row for row in pair_rows if row["model_name"] == "original_stgnn"]
@@ -219,9 +228,9 @@ def validate_configs(configs: list[Path], args: argparse.Namespace) -> None:
                 errors.append(f"{pair_label}: {Path(candidate['config']).name} 与 baseline 字段不一致: {', '.join(mismatches)}。")
 
     experiment_units = {
-        (row["sources"][0], row["polarizations"][0])
+        (row["source_unit"], row["polarizations"][0])
         for row in rows
-        if len(row["sources"]) == 1 and len(row["polarizations"]) == 1
+        if row["source_unit"] and len(row["polarizations"]) == 1
     }
     if expected_experiment_units is not None and len(experiment_units) != expected_experiment_units:
         errors.append(
@@ -284,7 +293,17 @@ def config_metadata(config: dict[str, Any]) -> dict[str, Any]:
     paths_cfg = config.get("paths", {})
     experiment_cfg = config.get("experiment", {})
     pols = _as_list(dataset_cfg.get("polarizations", config.get("ipix", {}).get("polarizations", []))) or []
-    sources = _as_list(dataset_cfg.get("sources", dataset_cfg.get("source"))) or []
+    shared_sources = _as_list(dataset_cfg.get("sources", dataset_cfg.get("source"))) or []
+    train_sources = _as_list(dataset_cfg.get("train_sources")) or shared_sources
+    test_sources = _as_list(dataset_cfg.get("test_sources")) or shared_sources
+    sources = shared_sources or sorted(set(train_sources) | set(test_sources))
+    require_disjoint = bool(dataset_cfg.get("require_disjoint_train_test_sources", False))
+    if require_disjoint and len(train_sources) == 1 and len(test_sources) == 1:
+        source_unit = f"{train_sources[0]}->{test_sources[0]}"
+    elif len(shared_sources) == 1:
+        source_unit = shared_sources[0]
+    else:
+        source_unit = ""
     paths_data_dir = str(paths_cfg.get("data_dir", ""))
     dataset_data_dir = str(dataset_cfg.get("data_dir", paths_data_dir))
     augmentation = json.dumps(dataset_cfg.get("augment", {}), sort_keys=True, ensure_ascii=False)
@@ -311,7 +330,11 @@ def config_metadata(config: dict[str, Any]) -> dict[str, Any]:
         ),
         "train_augmentation": augmentation,
         "sources": sources,
-        "source": sources[0] if len(sources) == 1 else "",
+        "source": source_unit,
+        "source_unit": source_unit,
+        "train_sources": train_sources,
+        "test_sources": test_sources,
+        "require_disjoint_train_test_sources": require_disjoint,
         "polarizations": pols,
         "polarization": pols[0] if len(pols) == 1 else "",
         "eval_protocol": str(eval_cfg.get("protocol", "per_file_pol")),
@@ -333,6 +356,8 @@ def comparable_mismatches(candidate: dict[str, Any], baseline: dict[str, Any]) -
     fields = [
         "data_dir",
         "expected_processing_mode",
+        "train_sources",
+        "test_sources",
         "train_augmentation",
         "epochs",
         "batch_size",

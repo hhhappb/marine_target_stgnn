@@ -25,7 +25,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from paper_modules.datasets import build_dataset, list_split_files, load_ipix_arrays, parse_source_and_pol, seed_everything
+from paper_modules.datasets import build_dataset, list_split_files, load_ipix_arrays, parse_source_and_pol, resolve_ipix_sources, seed_everything, validate_ipix_source_split
 from paper_modules.datasets.ipix_window import IPIX_LABEL_IGNORE_INDEX
 from paper_modules.datasets.scr_npz import ScrNpzDataset, list_test_scr_files
 from paper_modules.losses import build_loss
@@ -679,12 +679,18 @@ def main() -> None:
     temporal_diagnostics_enabled = bool(diagnostics_cfg.get("temporal", False))
     pols = dataset_cfg.get("polarizations", get_config_value(config, "ipix.polarizations"))
     sources = _as_list(dataset_cfg.get("sources", dataset_cfg.get("source")))
+    train_sources = sources
+    test_sources = sources
 
     train_files: list[Path] = []
     test_files: list[Path] = []
     if dataset_type == "ipix_window":
-        train_files = list_split_files(data_dir, "train", list(pols), sources=sources)
-        test_files = list_split_files(data_dir, "test", list(pols), sources=sources)
+        validate_ipix_source_split(dataset_cfg)
+        train_sources = resolve_ipix_sources(dataset_cfg, "train")
+        test_sources = resolve_ipix_sources(dataset_cfg, "test")
+        sources = sorted(set(train_sources or []) | set(test_sources or [])) or None
+        train_files = list_split_files(data_dir, "train", list(pols), sources=train_sources)
+        test_files = list_split_files(data_dir, "test", list(pols), sources=test_sources)
         if not train_files:
             raise SystemExit(f"No train files found under {data_dir}")
         if not test_files:
@@ -738,7 +744,7 @@ def main() -> None:
     print(f"Device: {device} | Data dir: {data_dir}", flush=True)
     print(f"Dataset: {dataset_type} | Eval protocol: {eval_protocol}", flush=True)
     if dataset_type == "ipix_window":
-        print(f"Train files: {len(train_files)} | Test files: {len(test_files)} | Sources: {sources or 'all'} | Pols: {pols}", flush=True)
+        print(f"Train files: {len(train_files)} | Test files: {len(test_files)} | Train sources: {train_sources or 'all'} | Test sources: {test_sources or 'all'} | Pols: {pols}", flush=True)
     else:
         print(f"Train file: {data_dir / 'train.npz'} | Test SCR files: {len(test_files)}", flush=True)
     print("=" * 72, flush=True)
@@ -873,6 +879,8 @@ def main() -> None:
             dataset_type=dataset_type,
             eval_protocol=eval_protocol,
             sources=sources,
+            train_sources=train_sources,
+            test_sources=test_sources,
             pols=pols,
             train_files=train_files,
             test_files=test_files,
@@ -932,6 +940,8 @@ def run_metadata(
     dataset_type: str,
     eval_protocol: str,
     sources: list[str] | None,
+    train_sources: list[str] | None,
+    test_sources: list[str] | None,
     pols: Any,
     train_files: list[Path],
     test_files: list[Path],
@@ -944,9 +954,11 @@ def run_metadata(
         "data_dir": str(data_dir),
         "dataset_data_dir": str(dataset_cfg.get("data_dir", data_dir)),
         "sources": sources or [],
+        "train_sources": train_sources or [],
+        "test_sources": test_sources or [],
         "polarizations": _as_list(pols) or [],
         "train_augmentation": dataset_cfg.get("augment", {}),
-        "dataset_protocol": dataset_cfg.get("protocol") if dataset_type == "scr_npz" else None,
+        "dataset_protocol": dataset_cfg.get("protocol"),
         "dataset_normalization": (
             dataset_cfg.get("normalization", "train_standardize_clip") if dataset_type == "scr_npz" else None
         ),

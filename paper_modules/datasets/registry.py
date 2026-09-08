@@ -16,7 +16,8 @@ def build_dataset(config: dict[str, Any], split: str, **overrides: Any):
     if dataset_type == "ipix_window":
         data_dir = Path(dataset_cfg.get("data_dir", config.get("paths", {}).get("data_dir", "")))
         pols = dataset_cfg.get("polarizations", config.get("ipix", {}).get("polarizations", []))
-        sources = _as_list(dataset_cfg.get("sources", dataset_cfg.get("source")))
+        validate_ipix_source_split(dataset_cfg)
+        sources = resolve_ipix_sources(dataset_cfg, split)
         if not data_dir:
             raise ValueError("dataset.type=ipix_window 需要 dataset.data_dir 或 paths.data_dir。")
         if not pols:
@@ -74,3 +75,30 @@ def _as_list(value: Any) -> list[str] | None:
     if isinstance(value, str):
         return [value]
     return [str(item) for item in value]
+
+def resolve_ipix_sources(dataset_cfg: dict[str, Any], split: str) -> list[str] | None:
+    if split not in {"train", "test"}:
+        raise ValueError(f"IPIX split 仅支持 train/test，实际为 {split!r}。")
+    shared = dataset_cfg.get("sources", dataset_cfg.get("source"))
+    return _as_list(dataset_cfg.get(f"{split}_sources", shared))
+
+
+def validate_ipix_source_split(dataset_cfg: dict[str, Any]) -> None:
+    if not bool(dataset_cfg.get("require_disjoint_train_test_sources", False)):
+        return
+    if "train_sources" not in dataset_cfg or "test_sources" not in dataset_cfg:
+        raise ValueError(
+            "require_disjoint_train_test_sources=true 要求显式提供 train_sources 和 test_sources。"
+        )
+    train_sources = _as_list(dataset_cfg.get("train_sources"))
+    test_sources = _as_list(dataset_cfg.get("test_sources"))
+    if not train_sources or not test_sources:
+        raise ValueError("train_sources 和 test_sources 均不得为空。")
+    overlap = sorted(set(train_sources) & set(test_sources))
+    if overlap:
+        raise ValueError(f"IPIX 跨文件协议禁止训练/测试 source 重叠：{overlap}")
+    shared = _as_list(dataset_cfg.get("sources", dataset_cfg.get("source")))
+    if shared is not None:
+        raise ValueError(
+            "跨文件协议不得同时声明共享 dataset.source(s)，请仅使用 train_sources/test_sources。"
+        )
