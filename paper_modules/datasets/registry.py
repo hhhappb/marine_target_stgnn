@@ -16,6 +16,7 @@ def build_dataset(config: dict[str, Any], split: str, **overrides: Any):
     if dataset_type == "ipix_window":
         data_dir = Path(dataset_cfg.get("data_dir", config.get("paths", {}).get("data_dir", "")))
         pols = dataset_cfg.get("polarizations", config.get("ipix", {}).get("polarizations", []))
+        reject_retired_ipix_cross_file_split(dataset_cfg)
         sources = _as_list(dataset_cfg.get("sources", dataset_cfg.get("source")))
         if not data_dir:
             raise ValueError("dataset.type=ipix_window 需要 dataset.data_dir 或 paths.data_dir。")
@@ -74,3 +75,19 @@ def _as_list(value: Any) -> list[str] | None:
     if isinstance(value, str):
         return [value]
     return [str(item) for item in value]
+
+def reject_retired_ipix_cross_file_split(dataset_cfg: dict[str, Any]) -> None:
+    retired_keys = sorted(
+        key
+        for key in (
+            "train_sources",
+            "test_sources",
+            "require_disjoint_train_test_sources",
+        )
+        if key in dataset_cfg
+    )
+    if retired_keys:
+        raise ValueError(
+            "IPIX 跨文件训练/测试协议已退役，禁止使用配置字段 "
+            f"{retired_keys}。PAX-L1 仅允许同一文件-极化条件内的 60/40 划分。"
+        )

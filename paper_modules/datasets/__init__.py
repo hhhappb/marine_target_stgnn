@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .ipix_window import IpixWindowDataset, list_split_files, load_ipix_arrays, parse_source_and_pol, seed_everything
-from .registry import build_dataset
+from .registry import build_dataset, reject_retired_ipix_cross_file_split
 from .scr_npz import ScrNpzDataset
 
 __all__ = [
@@ -11,5 +11,6 @@ __all__ = [
     "list_split_files",
     "load_ipix_arrays",
     "parse_source_and_pol",
+    "reject_retired_ipix_cross_file_split",
     "seed_everything",
 ]

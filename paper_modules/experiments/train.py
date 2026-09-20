@@ -25,7 +25,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from paper_modules.datasets import build_dataset, list_split_files, load_ipix_arrays, parse_source_and_pol, seed_everything
+from paper_modules.datasets import build_dataset, list_split_files, load_ipix_arrays, parse_source_and_pol, reject_retired_ipix_cross_file_split, seed_everything
 from paper_modules.datasets.ipix_window import IPIX_LABEL_IGNORE_INDEX
 from paper_modules.datasets.scr_npz import ScrNpzDataset, list_test_scr_files
 from paper_modules.losses import build_loss
@@ -678,6 +678,8 @@ def main() -> None:
         raise ValueError("diagnostics 配置必须是 mapping。")
     temporal_diagnostics_enabled = bool(diagnostics_cfg.get("temporal", False))
     pols = dataset_cfg.get("polarizations", get_config_value(config, "ipix.polarizations"))
+    if dataset_type == "ipix_window":
+        reject_retired_ipix_cross_file_split(dataset_cfg)
     sources = _as_list(dataset_cfg.get("sources", dataset_cfg.get("source")))
 
     train_files: list[Path] = []
@@ -946,7 +948,7 @@ def run_metadata(
         "sources": sources or [],
         "polarizations": _as_list(pols) or [],
         "train_augmentation": dataset_cfg.get("augment", {}),
-        "dataset_protocol": dataset_cfg.get("protocol") if dataset_type == "scr_npz" else None,
+        "dataset_protocol": dataset_cfg.get("protocol"),
         "dataset_normalization": (
             dataset_cfg.get("normalization", "train_standardize_clip") if dataset_type == "scr_npz" else None
         ),
