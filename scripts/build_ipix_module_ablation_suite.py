@@ -33,7 +33,6 @@ RADAR_PRIOR_SPATIAL = {
     "static_gamma": 0.5,
     "static_delta": 5,
     "static_weight": 0.7,
-    "dynamic_topk": 2,
     "dynamic_temperature": 0.2,
     "dropout": 0.1,
 }

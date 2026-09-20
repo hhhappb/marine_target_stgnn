@@ -7,7 +7,6 @@ stop_on_failure: true
 configs:
   - paper_modules/configs/real_imag_sfe_replacement_original_sfe_p16.yaml
   - paper_modules/configs/real_imag_sfe_replacement_radar_prior_dynamic_sfe_p16.yaml
-  - paper_modules/configs/real_imag_sfe_replacement_radar_prior_dynamic_sfe_p16_no_nonlocal.yaml
   - paper_modules/configs/real_imag_sfe_replacement_radar_prior_dynamic_sfe_p16_static_only.yaml
   - paper_modules/configs/real_imag_sfe_replacement_radar_prior_dynamic_sfe_p16_dynamic_only.yaml
 
