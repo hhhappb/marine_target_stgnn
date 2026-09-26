@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT))
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import BatchSampler, DataLoader
 from tqdm import tqdm
 
 from paper_modules.datasets import build_dataset, list_split_files, load_ipix_arrays, parse_source_and_pol, reject_retired_ipix_cross_file_split, seed_everything
@@ -31,6 +31,47 @@ from paper_modules.datasets.scr_npz import ScrNpzDataset, list_test_scr_files
 from paper_modules.losses import build_loss
 from paper_modules.models import build_model
 from utils.config import get_config_value, load_config
+
+
+class ScrBalancedBatchSampler(BatchSampler):
+    """Deterministic SCR-balanced batches; counts differ by at most one."""
+
+    def __init__(self, scr_values: torch.Tensor, batch_size: int, seed: int):
+        values = scr_values.detach().cpu().numpy()
+        self.batch_size = int(batch_size)
+        self.seed = int(seed)
+        self.groups = {int(scr): np.flatnonzero(values == scr) for scr in np.unique(values)}
+        if not self.groups or self.batch_size < len(self.groups):
+            raise ValueError("SCR 均衡批次要求 batch_size 不小于 SCR 档位数。")
+        self.num_samples = int(len(values))
+        self.num_batches = int(np.ceil(self.num_samples / self.batch_size))
+
+    def __len__(self) -> int:
+        return self.num_batches
+
+    def __iter__(self):
+        rng = np.random.default_rng(self.seed)
+        scrs = sorted(self.groups)
+        queues = {scr: rng.permutation(self.groups[scr]).tolist() for scr in scrs}
+        cursors = {scr: 0 for scr in scrs}
+        emitted = 0
+        for batch_index in range(self.num_batches):
+            size = min(self.batch_size, self.num_samples - emitted)
+            base, extra = divmod(size, len(scrs))
+            offset = batch_index % len(scrs)
+            rotated = scrs[offset:] + scrs[:offset]
+            counts = {scr: base + int(scr in rotated[:extra]) for scr in scrs}
+            batch: list[int] = []
+            for scr in scrs:
+                for _ in range(counts[scr]):
+                    if cursors[scr] == len(queues[scr]):
+                        queues[scr] = rng.permutation(self.groups[scr]).tolist()
+                        cursors[scr] = 0
+                    batch.append(int(queues[scr][cursors[scr]]))
+                    cursors[scr] += 1
+            rng.shuffle(batch)
+            emitted += len(batch)
+            yield batch
 
 
 def _forward_detection_model(
@@ -753,17 +794,33 @@ def main() -> None:
         train_dataset = build_dataset(config, "train", max_windows=args.max_train_windows, seed=seed)
         print(f"Loaded train windows: {len(train_dataset):,}", flush=True)
         print(f"Class weights: {train_dataset.class_weights().tolist()}", flush=True)
-        loader = DataLoader(
-            train_dataset,
-            batch_size=int(get_config_value(config, "train.batch_size")),
-            shuffle=True,
-            num_workers=int(get_config_value(config, "train.num_workers")),
-            pin_memory=torch.cuda.is_available(),
-            persistent_workers=int(get_config_value(config, "train.num_workers")) > 0,
-        )
+        batch_size = int(get_config_value(config, "train.batch_size"))
+        sampling = str(config.get("train", {}).get("sampling", "shuffle"))
+        loader_kwargs = {
+            "num_workers": int(get_config_value(config, "train.num_workers")),
+            "pin_memory": torch.cuda.is_available(),
+            "persistent_workers": int(get_config_value(config, "train.num_workers")) > 0,
+        }
+        if sampling == "scr_uniform":
+            if not isinstance(train_dataset, ScrNpzDataset):
+                raise ValueError("train.sampling=scr_uniform 只支持 SCR NPZ 数据。")
+            loader = DataLoader(
+                train_dataset,
+                batch_sampler=ScrBalancedBatchSampler(train_dataset.scr_values, batch_size, seed),
+                **loader_kwargs,
+            )
+        elif sampling == "shuffle":
+            loader = DataLoader(
+                train_dataset,
+                batch_size=batch_size,
+                shuffle=True,
+                **loader_kwargs,
+            )
+        else:
+            raise ValueError(f"未知 train.sampling: {sampling}")
         print(
-            f"Micro batch: {loader.batch_size} | gradient accumulation: {accumulation_steps} "
-            f"| nominal effective batch: {loader.batch_size * accumulation_steps}",
+            f"Micro batch: {batch_size} | gradient accumulation: {accumulation_steps} "
+            f"| nominal effective batch: {batch_size * accumulation_steps} | sampling: {sampling}",
             flush=True,
         )
         use_class_weights = bool(config.get("loss", {}).get("use_class_weights", True))

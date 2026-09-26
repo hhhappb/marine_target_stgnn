@@ -10,6 +10,8 @@ from torch.utils.data import Dataset
 
 
 SDRDSP_V2_PROTOCOL = "sdrdsp_fig9_local_crop_v2"
+SDRDSP_V11_PROTOCOL = "sdrdsp_fig9_v11_p4_n256_seed42"
+SDRDSP_V11_P8_PROTOCOL = "sdrdsp_fig9_v11_p8_n256_seed42"
 SDRDSP_PHASE_RCS_PROTOCOL = "sdrdsp_fig9_local_crop_phase_rcs_v1"
 SDRDSP_PHASE_ONLY_PROTOCOL = "sdrdsp_fig9_crop256_phase_only_v1"
 SDRDSP_RCS_ONLY_PROTOCOL = "sdrdsp_fig9_crop256_rcs_only_v1"
@@ -18,6 +20,8 @@ SDRDSP_N128_PROTOCOL = "sdrdsp_fig9_local_crop_n128_v1"
 SDRDSP_N512_PROTOCOL = "sdrdsp_fig9_local_crop_n512_v1"
 SDRDSP_LOCAL_CROP_PROTOCOLS = {
     SDRDSP_V2_PROTOCOL,
+    SDRDSP_V11_PROTOCOL,
+    SDRDSP_V11_P8_PROTOCOL,
     SDRDSP_PHASE_RCS_PROTOCOL,
     SDRDSP_PHASE_ONLY_PROTOCOL,
     SDRDSP_RCS_ONLY_PROTOCOL,
@@ -26,8 +30,27 @@ SDRDSP_LOCAL_CROP_PROTOCOLS = {
 }
 SDRDSP_STRICT_PROTOCOLS = SDRDSP_LOCAL_CROP_PROTOCOLS | {SDRDSP_FULL_T1_PROTOCOL}
 SDRDSP_N_SCALE_PROTOCOLS = {SDRDSP_N128_PROTOCOL, SDRDSP_N512_PROTOCOL}
+# v1.1 各脉冲数协议的显式契约：窗口数由生成规则 range(0, length-P, P)
+# 对 6940/6520 脉冲的实际生成结果核验后固化，manifest 校验强制一致。
+SDRDSP_V11_PROTOCOL_SPECS = {
+    SDRDSP_V11_PROTOCOL: {
+        "pulses": 4,
+        "train_windows_per_scr": 1734,
+        "test_windows_per_scr": 1629,
+        "train_shape": [24276, 2, 4, 256],
+    },
+    SDRDSP_V11_P8_PROTOCOL: {
+        "pulses": 8,
+        "train_windows_per_scr": 867,
+        "test_windows_per_scr": 814,
+        "train_shape": [12138, 2, 8, 256],
+    },
+}
+SDRDSP_V11_PROTOCOL_RANGE_CELLS = 256
 SDRDSP_PROTOCOL_RANGE_CELLS = {
     SDRDSP_V2_PROTOCOL: 256,
+    SDRDSP_V11_PROTOCOL: 256,
+    SDRDSP_V11_P8_PROTOCOL: 256,
     SDRDSP_PHASE_RCS_PROTOCOL: 256,
     SDRDSP_PHASE_ONLY_PROTOCOL: 256,
     SDRDSP_RCS_ONLY_PROTOCOL: 256,
@@ -82,7 +105,33 @@ def validate_sdrdsp_v2_manifest(
     if protocol_id not in SDRDSP_STRICT_PROTOCOLS:
         raise ValueError(f"未知 SDRDSP strict protocol: {protocol_id!r}。")
     is_full_t1 = protocol_id == SDRDSP_FULL_T1_PROTOCOL
-    expected_values = {
+    if protocol_id in SDRDSP_V11_PROTOCOL_SPECS:
+        spec = SDRDSP_V11_PROTOCOL_SPECS[protocol_id]
+        step = int(spec["pulses"])
+        expected_values = {
+            "dataset": "SDRDSP Fig. 9 v1.1 seed42 protocol",
+            "protocol.id": protocol_id,
+            "protocol.scope": "local_crop",
+            "protocol.paper_experiment": "Fig. 9",
+            "protocol.train_background_name": "20210106155330_01_staring.mat",
+            "protocol.test_background_name": "20210106155432_01_staring.mat",
+            "protocol.train_scr_db": TRAIN_SCR_VALUES,
+            "protocol.test_scr_db": TEST_SCR_VALUES,
+            "protocol.pulses": int(spec["pulses"]),
+            "protocol.range_cells": 256,
+            "protocol.reference_cells": 20,
+            "protocol.scr_reference_power": "per_window_random_20_cell_mean_power",
+            "protocol.target_injection_order": "per_window_before_packaging",
+            "protocol.train_targets_per_window": 5,
+            "protocol.test_target_cell_one_based": 2083,
+            "protocol.test_speed_mps": 0.4,
+            "protocol.pulse_window": f"non_overlapping_step_{step}_drop_last_valid_window",
+            "protocol.normalization": "precomputed_train_amplitude_p99_iq",
+            "protocol.random_initial_phase": "per_target_per_window_randomstate_777",
+            "outputs.train_npz.X": list(spec["train_shape"]),
+        }
+    else:
+        expected_values = {
         "dataset": _dataset_label(protocol_id),
         "protocol.id": protocol_id,
         "protocol.scope": "full_t1" if is_full_t1 else "local_crop",
@@ -104,7 +153,7 @@ def validate_sdrdsp_v2_manifest(
         "protocol.normalization": "none",
         "crop.paper_target_cell_one_based": 2083,
         "crop.paper_target_index_zero_based": 2082,
-    }
+        }
     for dotted_path, expected in expected_values.items():
         actual = _manifest_value(manifest, dotted_path)
         if actual != expected:
@@ -165,7 +214,19 @@ def validate_sdrdsp_v2_manifest(
 
     reference_cells = int(_manifest_value(manifest, "protocol.reference_cells"))
     min_target_gap = int(_manifest_value(manifest, "protocol.min_target_gap"))
-    if min_target_gap < reference_cells + 1:
+    if protocol_id in SDRDSP_V11_PROTOCOL_SPECS:
+        spec = SDRDSP_V11_PROTOCOL_SPECS[protocol_id]
+        if int(_manifest_value(manifest, "audit.train_windows_per_scr")) != int(spec["train_windows_per_scr"]):
+            raise ValueError(
+                f"{protocol_id} 训练窗数必须为每 SCR {spec['train_windows_per_scr']}。"
+            )
+        if int(_manifest_value(manifest, "audit.test_windows_per_scr")) != int(spec["test_windows_per_scr"]):
+            raise ValueError(
+                f"{protocol_id} 测试窗数必须为每 SCR {spec['test_windows_per_scr']}。"
+            )
+        if float(_manifest_value(manifest, "normalization.train_amplitude_p99")) <= 0:
+            raise ValueError(f"{protocol_id} 的训练 P99 必须为正数。")
+    elif min_target_gap < reference_cells + 1:
         raise ValueError(
             f"训练目标间隔不足: min_target_gap={min_target_gap}, 至少应为 {reference_cells + 1}。"
         )
@@ -306,8 +367,15 @@ class ScrNpzDataset(Dataset):
         if protocol is not None:
             if protocol not in SDRDSP_STRICT_PROTOCOLS:
                 raise ValueError(f"未知 SCR protocol: {protocol}")
-            if normalization != "none":
-                raise ValueError(f"{SDRDSP_V2_PROTOCOL} 必须使用 normalization=none。")
+            expected_normalization = (
+                "precomputed_train_p99_iq"
+                if protocol in SDRDSP_V11_PROTOCOL_SPECS
+                else "none"
+            )
+            if normalization != expected_normalization:
+                raise ValueError(
+                    f"{protocol} 必须使用 normalization={expected_normalization}，实际为 {normalization}。"
+                )
             validate_sdrdsp_v2_manifest(self.data_dir, expected_pulses, expected_range_cells)
 
         x, y, scr_values = load_scr_arrays(
@@ -332,7 +400,7 @@ class ScrNpzDataset(Dataset):
                     f"严格 SDRDSP v2 {split} 标签应每窗口包含 {expected_positive} 个目标单元，"
                     f"实际范围为 [{positive_counts.min()}, {positive_counts.max()}]。"
                 )
-        if normalization == "none":
+        if normalization in {"none", "precomputed_train_p99_iq"}:
             if norm is not None:
                 raise ValueError("normalization=none 时不应传入 norm。")
             self.norm = None

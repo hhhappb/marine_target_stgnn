@@ -1,0 +1,38 @@
+[
+  {
+    "path": "paper_modules/datasets/scr_npz.py",
+    "sha256": "50661b601513ebb5a1547fdef0d8b81d2b662a09179859436ad7edf68c01b16e"
+  },
+  {
+    "path": "paper_modules/experiments/train.py",
+    "sha256": "7eef0778b2360c990a6cc4e3b275e349753541951877a6c3b9cd7cc183345e9c"
+  },
+  {
+    "path": "paper_modules/configs/sdrdsp_v11_p8_a0_original_seed42.yaml",
+    "sha256": "1f3955d53d53abd00b0e20d91ae008ce8547c89ff904e65e3fa6fe4656e28aa7"
+  },
+  {
+    "path": "paper_modules/configs/sdrdsp_v11_p8_a1_attention_tfe1_seed42.yaml",
+    "sha256": "b686a10622bdc4d0ef2b26e9d7e9b68ad7a01b5836781d0114049f35b32dcbe7"
+  },
+  {
+    "path": "scripts/preprocess_sdrdsp_v11.py",
+    "sha256": "5bd9c021d17585d1f9536e2a35544c1847df3ef8ae5063917ec4dd7788efc34b"
+  },
+  {
+    "path": "docs/sdrdsp_experiment_protocol.md",
+    "sha256": "a9b904beaeef089ed54a3ebebfd4a27362a862af9707313caefb546d735042c2"
+  },
+  {
+    "path": "docs/ipix_pax_l1_protocol.md",
+    "sha256": "edb221df4a5a907d9dfeec947477314b8927a862c48dd8038ab9562481817dbe"
+  },
+  {
+    "path": "tests/test_sdrdsp_v11_protocol.py",
+    "sha256": "508d04b97506e09125b449d655df371d9d419f033634854aa97ca8d0d35610a2"
+  },
+  {
+    "path": "tests/test_sdrdsp_v11_p8_protocol.py",
+    "sha256": "8cd4b632ff13e28e00be1c6e0dde463c8281d66d519b078ba2fb0ce68cc33044"
+  }
+]

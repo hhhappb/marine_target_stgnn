@@ -1,0 +1,50 @@
+paths:
+  data_dir: data/sdrdsp_v11_p8_n256_seed42
+  save_dir: logs/training/sdrdsp_v11_p8_a0_original_seed42
+dataset:
+  type: scr_npz
+  data_dir: data/sdrdsp_v11_p8_n256_seed42
+  protocol: sdrdsp_fig9_v11_p8_n256_seed42
+  normalization: precomputed_train_p99_iq
+model:
+  name: modular_stgnn
+  pulses: 8
+  range_cells: 256
+radar_features:
+  type: real_imag
+  hidden_channels: 32
+  out_channels: 64
+spatial_graph:
+  type: original_stfe
+  stage1_out_channels: 128
+  stage2_out_channels: 512
+temporal:
+  type: stgnn_tfe
+  stage1_out_channels: 256
+  stage2_out_channels: 1024
+  out_channels: 1024
+clutter_gate:
+  enabled: false
+detection_head:
+  hidden_channels: 512
+loss:
+  type: cross_entropy
+  use_class_weights: false
+train:
+  epochs: 20
+  batch_size: 24
+  gradient_accumulation_steps: 1
+  learning_rate: 0.001
+  optimizer: adam
+  weight_decay: 0.0
+  scheduler: none
+  grad_clip: null
+  num_workers: 0
+  seed: 42
+  deterministic: true
+  sampling: scr_uniform
+eval:
+  protocol: pd_scr_curve
+  threshold_source: train
+  score_space: o0
+  pfa_values: [0.0001, 0.001, 0.01]
