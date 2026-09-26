@@ -10,6 +10,8 @@ from .radar_prior_dynamic_sfe import RadarPriorDynamicSFE
 
 
 def build_spatial_graph(config: dict[str, object], in_channels: int, out_channels: int) -> nn.Module:
+    if "dynamic_topk" in config:
+        raise ValueError("dynamic_topk 已移除；动态图仅使用局部距离窗口。")
     graph_type = str(config.get("type", "local_3"))
     if graph_type == "local_3":
         return LocalRangeGraph(in_channels, out_channels, radius=1)
@@ -32,7 +34,6 @@ def build_spatial_graph(config: dict[str, object], in_channels: int, out_channel
             static_gamma=float(config.get("static_gamma", 0.5)),
             static_delta=int(config.get("static_delta", 5)),
             static_weight=float(config.get("static_weight", 0.7)),
-            dynamic_topk=int(config.get("dynamic_topk", 2)),
             dynamic_temperature=float(config.get("dynamic_temperature", 0.2)),
             dropout=float(config.get("dropout", 0.1)),
         )

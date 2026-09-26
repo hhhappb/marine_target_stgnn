@@ -4,6 +4,7 @@ import torch.nn as nn
 
 from .modular_stgnn import ModularSTGNN
 from .original_stgnn import OriginalSTGNN
+from .ipix_pax_l1_a1_tfe1 import IpixPaxL1A1TFE1
 
 
 def build_model(config: dict[str, object]) -> nn.Module:
@@ -15,4 +16,6 @@ def build_model(config: dict[str, object]) -> nn.Module:
         return OriginalSTGNN(config)
     if name == "modular_stgnn":
         return ModularSTGNN(config)
+    if name == "ipix_pax_l1_a1_tfe1":
+        return IpixPaxL1A1TFE1(config)
     raise ValueError(f"Unknown paper model: {name}")

@@ -20,6 +20,10 @@ IPIX_SECONDARY_ECHO_POLICIES = {
     "stored",
     "clutter_permutation",
 }
+IPIX_RANGE_ROLL_MODES = {
+    "circular",
+    "clutter_fill",
+}
 
 
 def seed_everything(seed: int) -> None:
@@ -103,6 +107,7 @@ class IpixWindowDataset(Dataset):
         self.files = files
         self.x_parts: list[np.ndarray] = []
         self.y_parts: list[np.ndarray] = []
+        self.range_role_parts: list[np.ndarray] = []
         self.rng = np.random.default_rng(seed)
         self._range_roll = _parse_range_roll(range_roll)
         remaining = max_windows
@@ -122,6 +127,11 @@ class IpixWindowDataset(Dataset):
             )
             self.x_parts.append(x)
             self.y_parts.append(y)
+            if self._range_roll["enabled"] and self._range_roll["mode"] == "clutter_fill":
+                roles = _load_range_roles(path, int(x.shape[2]))
+                self.range_role_parts.append(
+                    np.broadcast_to(roles, (len(x), len(roles))).copy()
+                )
             if remaining is not None:
                 remaining -= len(x)
 
@@ -143,9 +153,17 @@ class IpixWindowDataset(Dataset):
         self.imag = torch.from_numpy(np.ascontiguousarray(x.imag, dtype=np.float32))
         self.y = torch.from_numpy(np.ascontiguousarray(y, dtype=np.int64))
         self._range_roll = _finalize_range_roll(self._range_roll, int(self.y.shape[1]))
+        self.range_roles = (
+            torch.from_numpy(
+                np.ascontiguousarray(np.concatenate(self.range_role_parts, axis=0), dtype=np.int8)
+            )
+            if self.range_role_parts
+            else None
+        )
 
         self.x_parts = []
         self.y_parts = []
+        self.range_role_parts = []
 
     def __len__(self) -> int:
         return int(self.y.shape[0])
@@ -156,11 +174,21 @@ class IpixWindowDataset(Dataset):
         y = self.y[idx]
         if self._range_roll["enabled"]:
             max_shift = int(self._range_roll["max_shift"])
-            shift = int(torch.randint(0, max_shift + 1, (1,)).item())
-            if shift:
+            if self._range_roll["mode"] == "circular":
+                shift = int(torch.randint(0, max_shift + 1, (1,)).item())
                 real = torch.roll(real, shifts=shift, dims=-1)
                 imag = torch.roll(imag, shifts=shift, dims=-1)
                 y = torch.roll(y, shifts=shift, dims=-1)
+            else:
+                if self.range_roles is None:
+                    raise RuntimeError("clutter_fill 增强缺少 range_roles。")
+                roles = self.range_roles[idx]
+                shift = _sample_non_circular_shift(
+                    roles,
+                    max_shift,
+                    include_identity=bool(self._range_roll["include_identity"]),
+                )
+                real, imag, y = _non_circular_clutter_fill(real, imag, y, roles, shift)
         return real, imag, y
 
     def class_weights(self) -> torch.Tensor:
@@ -287,12 +315,15 @@ def _parse_range_roll(config: dict[str, Any] | None) -> dict[str, Any]:
     config = config or {}
     enabled = bool(config.get("enabled", False))
     mode = str(config.get("mode", "circular"))
-    if mode != "circular":
-        raise ValueError(f"range_roll.mode 仅支持 circular，实际为 {mode}。")
+    if mode not in IPIX_RANGE_ROLL_MODES:
+        raise ValueError(
+            f"range_roll.mode 仅支持 {sorted(IPIX_RANGE_ROLL_MODES)}，实际为 {mode}。"
+        )
     return {
         "enabled": enabled,
         "max_shift": config.get("max_shift"),
         "mode": mode,
+        "include_identity": bool(config.get("include_identity", True)),
     }
 
 
@@ -308,3 +339,95 @@ def _finalize_range_roll(config: dict[str, Any], range_cells: int) -> dict[str, 
     if max_shift <= 0 or max_shift >= range_cells:
         raise ValueError(f"range_roll.max_shift 必须在 [1, {range_cells - 1}] 内，实际为 {max_shift}。")
     return {**config, "max_shift": max_shift}
+
+def _load_range_roles(path: Path, range_cells: int) -> np.ndarray:
+    with np.load(path) as data:
+        if "range_roles" not in data:
+            raise ValueError(f"clutter_fill 需要 NPZ 中存在 range_roles：{path}")
+        roles = np.asarray(data["range_roles"], dtype=np.int8)
+    if roles.shape != (range_cells,):
+        raise ValueError(f"IPIX range_roles 必须为 ({range_cells},)，实际为 {roles.shape}：{path}")
+    if not np.all(np.isin(roles, [0, 1, 2])):
+        raise ValueError(f"IPIX range_roles 仅允许0/1/2，实际为 {np.unique(roles).tolist()}。")
+    if int(np.count_nonzero(roles == 2)) != 1:
+        raise ValueError("clutter_fill 要求 range_roles 恰好包含一个 primary(role=2) 单元。")
+    if not np.any(roles == 0):
+        raise ValueError("clutter_fill 至少需要一个真实 clutter(role=0) 单元作为填充来源。")
+    return roles
+
+
+def _sample_non_circular_shift(
+    roles: torch.Tensor,
+    max_shift: int,
+    include_identity: bool,
+) -> int:
+    if roles.ndim != 1:
+        raise ValueError(f"range_roles 必须是一维，实际 shape={tuple(roles.shape)}。")
+    related = torch.nonzero(roles > 0, as_tuple=False).flatten()
+    if related.numel() == 0:
+        raise ValueError("clutter_fill 要求至少一个 target-related 距离单元。")
+    range_cells = int(roles.numel())
+    minimum = max(-max_shift, -int(related.min().item()))
+    maximum = min(max_shift, range_cells - 1 - int(related.max().item()))
+    candidates = torch.arange(minimum, maximum + 1, dtype=torch.int64)
+    if not include_identity:
+        candidates = candidates[candidates != 0]
+    if candidates.numel() == 0:
+        raise ValueError("clutter_fill 在当前 target-related 范围和 max_shift 下没有合法非零位移。")
+    choice = int(torch.randint(0, int(candidates.numel()), (1,)).item())
+    return int(candidates[choice].item())
+
+
+def _non_circular_clutter_fill(
+    real: torch.Tensor,
+    imag: torch.Tensor,
+    labels: torch.Tensor,
+    roles: torch.Tensor,
+    shift: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if real.shape != imag.shape or real.ndim != 2:
+        raise ValueError(
+            "clutter_fill 要求 real/imag 具有相同的 [P, N] shape，"
+            f"实际 real={tuple(real.shape)}, imag={tuple(imag.shape)}。"
+        )
+    range_cells = int(real.shape[-1])
+    if labels.shape != (range_cells,) or roles.shape != (range_cells,):
+        raise ValueError(
+            "clutter_fill 要求 labels/range_roles 均为 [N]，"
+            f"实际 labels={tuple(labels.shape)}, roles={tuple(roles.shape)}, N={range_cells}。"
+        )
+    if shift == 0:
+        return real, imag, labels
+    if abs(shift) >= range_cells:
+        raise ValueError(f"clutter_fill 位移必须满足 abs(shift)<{range_cells}，实际为 {shift}。")
+    related = torch.nonzero(roles > 0, as_tuple=False).flatten()
+    if related.numel() == 0:
+        raise ValueError("clutter_fill 要求至少一个 target-related 距离单元。")
+    shifted_related = related + shift
+    if int(shifted_related.min().item()) < 0 or int(shifted_related.max().item()) >= range_cells:
+        raise ValueError("clutter_fill 位移会截断 target-related 邻域，拒绝执行。")
+    clutter_indices = torch.nonzero(roles == 0, as_tuple=False).flatten()
+    if clutter_indices.numel() == 0:
+        raise ValueError("clutter_fill 至少需要一个真实 clutter(role=0) 单元作为填充来源。")
+
+    shifted_real = torch.empty_like(real)
+    shifted_imag = torch.empty_like(imag)
+    shifted_labels = torch.empty_like(labels)
+    if shift > 0:
+        shifted_real[..., shift:] = real[..., :-shift]
+        shifted_imag[..., shift:] = imag[..., :-shift]
+        shifted_labels[shift:] = labels[:-shift]
+        vacated = slice(0, shift)
+        vacated_count = shift
+    else:
+        shifted_real[..., :shift] = real[..., -shift:]
+        shifted_imag[..., :shift] = imag[..., -shift:]
+        shifted_labels[:shift] = labels[-shift:]
+        vacated = slice(shift, None)
+        vacated_count = -shift
+    donor_choices = torch.randint(0, int(clutter_indices.numel()), (vacated_count,))
+    donor_indices = clutter_indices[donor_choices]
+    shifted_real[..., vacated] = real[..., donor_indices]
+    shifted_imag[..., vacated] = imag[..., donor_indices]
+    shifted_labels[vacated] = 0
+    return shifted_real, shifted_imag, shifted_labels

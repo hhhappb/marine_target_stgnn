@@ -92,6 +92,8 @@ class ModularSTGNN(nn.Module):
         in_channels: int,
         out_channels: int,
     ) -> SpatialGraphModule:
+        if "dynamic_topk" in config:
+            raise ValueError("dynamic_topk 已移除；动态图仅使用局部距离窗口。")
         return SpatialGraphModule(
             in_channels=in_channels,
             out_channels=out_channels,
@@ -99,7 +101,6 @@ class ModularSTGNN(nn.Module):
             k=int(config.get("k", 1)),
             use_distance_decay=bool(config.get("use_distance_decay", False)),
             distance_decay=float(config.get("distance_decay", 0.25)),
-            dynamic_topk=int(config.get("dynamic_topk", 2)),
             static_gamma=float(config.get("static_gamma", 0.5)),
             static_delta=int(config.get("static_delta", 5)),
             static_weight=float(config.get("static_weight", 0.7)),

@@ -11,7 +11,7 @@ class RadarPriorDynamicSFE(nn.Module):
     """雷达先验动态 SFE：用静态距离先验和慢时间动态先验完整替换原 SFE。
 
     节点是距离单元。静态图采用距离衰减和局部窗口增强；动态图由当前观测窗口内
-    每个距离单元的慢时间签名相似性生成，并限制在少量非局部补边上，避免全连接过混合。
+    每个距离单元的慢时间签名相似性生成，并限制在局部距离窗口内。
     """
 
     def __init__(
@@ -21,7 +21,6 @@ class RadarPriorDynamicSFE(nn.Module):
         static_gamma: float = 0.5,
         static_delta: int = 5,
         static_weight: float = 0.7,
-        dynamic_topk: int = 2,
         dynamic_temperature: float = 0.2,
         dropout: float = 0.1,
     ):
@@ -37,7 +36,6 @@ class RadarPriorDynamicSFE(nn.Module):
         self.static_gamma = float(static_gamma)
         self.static_delta = max(0, int(static_delta))
         self.static_weight = float(static_weight)
-        self.dynamic_topk = max(0, int(dynamic_topk))
         self.dynamic_temperature = float(dynamic_temperature)
         self.linear = nn.Linear(self.in_channels, self.out_channels)
         self.norm = nn.BatchNorm2d(self.out_channels)
@@ -77,25 +75,9 @@ class RadarPriorDynamicSFE(nn.Module):
         signature = x.permute(0, 3, 2, 1).reshape(x.size(0), x.size(3), -1)
         signature = F.normalize(signature, dim=-1)
         scores = torch.matmul(signature, signature.transpose(-1, -2)) / self.dynamic_temperature
-        allowed = self._allowed_dynamic_edges(scores, static_mask)
+        allowed = static_mask | torch.eye(x.size(3), device=x.device, dtype=torch.bool)
         scores = scores.masked_fill(~allowed, -1e9)
         return torch.softmax(scores, dim=-1)
-
-    def _allowed_dynamic_edges(self, scores: torch.Tensor, static_mask: torch.Tensor) -> torch.Tensor:
-        batch, ranges, _ = scores.shape
-        eye = torch.eye(ranges, device=scores.device, dtype=torch.bool)
-        local = static_mask | eye
-        allowed = local.unsqueeze(0).expand(batch, ranges, ranges).clone()
-        if self.dynamic_topk <= 0:
-            return allowed
-
-        candidate_scores = scores.masked_fill(allowed, float("-inf"))
-        k = min(self.dynamic_topk, ranges)
-        indices = torch.topk(candidate_scores, k=k, dim=-1).indices
-        dynamic = torch.zeros_like(allowed)
-        dynamic.scatter_(-1, indices, True)
-        dynamic = dynamic & torch.isfinite(candidate_scores)
-        return allowed | dynamic
 
     @staticmethod
     def _symmetric_normalize(adj: torch.Tensor) -> torch.Tensor:
