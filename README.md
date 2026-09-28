@@ -1,5 +1,7 @@
 # marine_target_stgnn
 
+当前实验设置见 [IPIX与SDRDSP协议索引](docs/experiment_protocols.md)。SDRDSP v1.1使用参考单元平均功率定义SCR，与论文式(17)求和口径相差约13.01 dB，具体公式及版本边界见协议。
+
 本仓库研究 **ST-GNN 的空间建模和时间建模改进**。`main` 保存原始 ST-GNN
 基线、可配置的模块实现及实验协议；不能把仓库中存在某个模块理解为默认模型
 已经启用它，或理解为该模块的独立效果已经得到证明。

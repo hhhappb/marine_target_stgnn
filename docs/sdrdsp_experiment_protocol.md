@@ -1,6 +1,49 @@
 # SDRDSP 实验协议
 
-本文件定义项目自2026年9月22日起唯一有效的SDRDSP正式实验协议。此前的2400窗快筛、10 epochs、P=16全量训练和logit margin结果仅保留为历史诊断，不进入新实验的模型排序或结论。
+本文件记录自2026年9月22日起使用的SDRDSP v1.1本地协议，2026年9月28日补充SCR口径审计及P=8运行设置。此前的2400窗快筛、10 epochs、P=16全量训练和logit margin结果仅保留为历史诊断，不进入新实验排序或结论。下文P=4、20轮是快筛设置，不代表全部后续预算。见 [协议索引](experiment_protocols.md)。
+
+## SCR定义及论文差异
+
+当前 `scripts/preprocess_sdrdsp_v11.py` 对P个脉冲与M=20个随机非目标参考单元一起取平均。
+
+```text
+cp_mean = sum_p sum_m |clutter[p,m]|^2 / (P * M)
+A = sqrt(cp_mean * 10^(SCR_mean / 10))
+target[p] = A * exp(j * (phi0 + 4*pi*v*PRT*p/lambda))
+```
+
+P=4和P=8数据manifest均标记 `scr_reference_power=per_window_random_20_cell_mean_power`。
+
+ST-GNN论文式(17)对M个参考单元功率求和，没有除以M。在相同脉冲平均方式下，旧E4脚本 `e4d2_gdcm/experiments/train_sdrdsp.py` 的sum/P与当前定义关系为
+
+```text
+cp_sum = M * cp_mean
+SCR_sum = SCR_mean - 10*log10(20) = SCR_mean - 13.0103 dB
+```
+
+同一个目标的当前SCR比求和口径高13.0103 dB。相同SCR标签下，当前目标功率为求和口径的1/20，幅度为1/sqrt(20)。不能把当前横轴直接称为论文式(17)口径，也不能将跨协议曲线差值归因于模型。代数换算不代表两套完整生成流程或实验结果可互相替代。
+
+来源为2026年9月22日提供的《SDRDDSP数据集实验协议(1).docx》第3.2节cp说明与第3.3节SCR定义。材料明确写了 `/(P*M)`，但同时标注为Eq.17，与论文存在上述差异。当日按材料及用户指定的100轮、seed42、最低训练损失checkpoint生成本Markdown和代码，9月26日由提交 `de3a93b` 入库。此次仅记录实际口径，不改变历史数据或结果。
+
+## P=8扩展及运行预算
+
+| 版本 | 每SCR训练窗 | 每SCR测试窗 | 总训练窗 | 用途 |
+|---|---:|---:|---:|---|
+| P=4、步长4 | 1734 | 1629 | 24276 | v1.1基础协议 |
+| P=8、步长8 | 867 | 814 | 12138 | 更长观察窗扩展 |
+
+两版本均舍弃最后一个可完整取出的窗口。数据分别位于 `data/sdrdsp_v11_p4_n256_seed42` 和 `data/sdrdsp_v11_p8_n256_seed42`，协议ID分别为 `sdrdsp_fig9_v11_p4_n256_seed42` 和 `sdrdsp_fig9_v11_p8_n256_seed42`。
+
+20轮为候选快筛，100轮为历史确认预算，最近2026年9月28日Original/E4-selected配对配置为P=8、120轮、seed42、batch24、学习率0.001、SCR均衡采样、最低训练损失checkpoint。必须按相同预算比较，不把120轮与20轮结果混排。
+
+当前配对的本地证据目录为
+
+- `logs/training/20260928_sdrdsp_v11_p8_original_120ep_seed42_pair/`，配置为 `config.yaml`。
+- `logs/training/20260928_sdrdsp_v11_p8_e4_selected_120ep_seed42_pair_fixed_sampler/`，配置为 `config.json`，来源为 `provenance.json`。使用修复采样器版本，不与同名未修复运行混用。
+
+Original使用I/Q及原始两级SFE/TFE与检测头。E4-selected采用E4特征、gdcm_a0检测头，SFE1/SFE2为radar_prior_dynamic_sfe，TFE1为pulse_attention_only_tfe，TFE2为stgnn_tfe。空间和时间参数与 [IPIX当前协议](ipix_experiment_protocol.md)列出的selected配置一致。比较属于整体模型方案，不是单模块归因。
+
+预生成NPZ使用训练P99归一化。E4分支另有训练拟合的E4预处理，来源记录 `raw_reconstruction_p99=3121.6865234375`、`e4_train_preprocessor_p99=3475.56396484375`，不能称为两模型输入特征完全相同。此处记录运行配置，不据此宣称训练完成或完整E4代码已经进入main。
 
 ## 数据和目标构造
 

@@ -1,5 +1,7 @@
 # IPIX PAX-L1 协议
 
+2026年9月28日说明：本文件保留P=16的位置增强协议定义。最近本地P=8、70轮完整配对见 [IPIX当前实验协议](ipix_experiment_protocol.md)，不得与本文件混称。
+
 状态：唯一正式 IPIX 位置增强难度协议
 
 协议名称：`IPIX PAX-L1`
