@@ -1,0 +1,74 @@
+# SE (selected P=8 E4) Default Configuration
+# Shared hyperparameters across all SE experiments.
+#
+# SE = E4 parallel-representation backbone (1216ch) + GDCM-A0 detector head,
+# with the SELECTED spatiotemporal slots (radar-prior dynamic SFE + A1
+# pulse-attention TFE1 + original gated TFE2).
+
+# -- Data --
+data:
+  P: 8                 # pulses per CPI (SE is compiled for P=8)
+  N: 14                # IPIX range cells
+  step: 4              # sliding window stride
+  normalize: "auto"    # official ipixload auto (demean + phase imbalance)
+
+# -- Model --
+model:
+  name: "se_selected_e4"
+  detector: "gdcm_a0"  # final: D_a only log(1+|delta|) | 128ch
+  input_channels:
+    main: 4            # I/P99, Q/P99, PL_raw, RPH/P99
+    phase_cell: 3
+    amp_map: 1
+    amp_cell: 4
+    global: 6
+  backbone_output: 1216
+  num_parameters: 4461538
+  # Selected spatiotemporal slots (mirrors selected_e4/config.json).
+  spatiotemporal:
+    spatial1:
+      type: "radar_prior_dynamic_sfe"
+      static_gamma: 0.5
+      static_delta: 5          # dynamic edges restricted to local radius 5
+      static_weight: 0.7       # static/dynamic weights 0.7 / 0.3
+      dynamic_temperature: 0.2
+      dropout: 0.1
+    temporal1:
+      type: "pulse_attention_only_tfe"
+      attention_dim: 64
+      num_heads: 4
+      residual_scale: 0.1      # fixed A1 residual
+      use_attention: true
+    spatial2:
+      type: "radar_prior_dynamic_sfe"
+      static_gamma: 0.5
+      static_delta: 5
+      static_weight: 0.7
+      dynamic_temperature: 0.2
+      dropout: 0.1
+    temporal2:
+      type: "stgnn_tfe"
+
+# -- Training --
+training:
+  epochs: 60
+  batch_size: 64
+  grad_accum: 8                # effective batch 512
+  optimizer: "adam"
+  learning_rate: 0.001
+  loss: "ce"                   # paper Eq.(16): unweighted CE
+  scheduler: null
+  weight_decay: 0.0
+  grad_clip: null
+  seeds: [42]
+
+# -- FAR Control (Eq.15) --
+far:
+  calibration_source: "train_all_clutter"
+  pfa_levels: [0.0001, 0.001, 0.01]
+  method: "percentile"         # sorto0 of all clutter cells, h = o0[ceil(pfa*Nc)-1]
+  temperature_scaling: "auto"  # mean|logit| over train clutter, clip [2,16]
+
+# -- Evaluation --
+eval:
+  metrics: [pd, pf_all_non_prc, pf_clutter_only, src_target_rate]

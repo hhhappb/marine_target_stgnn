@@ -1,0 +1,18 @@
+{
+  "selected_e4/common.py": "eb67716c8574dbfd005a6853ef5e0cd38d53a6b0b0e01ee492579aa3a6fe2cbb",
+  "selected_e4/spatial.py": "17746c21be834491969ef748c48d118abe97c386dc669c29476807c2772966c1",
+  "selected_e4/temporal_attention.py": "75a31a9653c34455cd8cbd741bc45737f37b917c4497258980c0646ef733a430",
+  "selected_e4/temporal_gate.py": "4644794f03e9b5ecb2b8e98681a812870dc2b0704ad4280c20534fb89486416b",
+  "selected_e4/registry.py": "d9ee40c0b02d516d5b7919f0928725dbd8a606b9e7100c584b795eca436a6bc5",
+  "selected_e4/stgnn_backbone.py": "629bba0581dd7e4ebc1636934975b2a3b07aa0a5b7b99388bce92ab9e26a66c0",
+  "selected_e4/encoders.py": "1f27148419aeb0421b13071f15eaf01fffe2def803d0e128484c73c883a517ec",
+  "selected_e4/e4_backbone.py": "b88241378d0f6b98804e2eb6be62169be785012c03aff1a5f0a7860af71be8af",
+  "selected_e4/detector.py": "c966e0843066be74da55469a7b01bf471355f3ff61c8fb26452019968a291ed0",
+  "selected_e4/preprocess.py": "74e414c8f8cd88ef49d81a8513f729ba1214e906c88f2507fc52fcea8232a399",
+  "selected_e4/config.json": "ac79b3b2638fa4baefe856ab5f03c0f02b11aee78773a309be648d53338df38d",
+  "selected_e4/model.py": "141dc522905c51ed40effd2cec779452d7e36e8d14726429131197d005e13a7d",
+  "selected_e4/__init__.py": "dfcad397eaa153dd4cb37e6bd24d4679b58621db6d47ff34164194baaaa1d16b",
+  "example.py": "f7d23f2b432277b6dbfa97cd6ecc32b88a367cbd2cb00ddef683af6de5c7565b",
+  "README.md": "21e1b1bb82f32952c20498a5c1fd5fd138d2fd29dd303fc59554aa2a4af52e4e",
+  "VERIFICATION.json": "698e96bfeb2b8b85ad2f8c7354db57860f758abc7de98d06479bec68d4ef061f"
+}

@@ -1,0 +1,11 @@
+{
+  "e4_checkpoints_strictly_compatible": 56,
+  "preprocessing_equal": true,
+  "eval_logits_exactly_equal_to_experiment": true,
+  "forward_shape": [
+    4,
+    2,
+    14
+  ],
+  "backward_finite": true
+}

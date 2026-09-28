@@ -1,0 +1,33 @@
+{
+  "pulses": 8,
+  "range_cells": 14,
+  "detector": "gdcm_a0",
+  "spatiotemporal": {
+    "spatial1": {
+      "type": "radar_prior_dynamic_sfe",
+      "static_gamma": 0.5,
+      "static_delta": 5,
+      "static_weight": 0.7,
+      "dynamic_temperature": 0.2,
+      "dropout": 0.1
+    },
+    "temporal1": {
+      "type": "pulse_attention_only_tfe",
+      "attention_dim": 64,
+      "num_heads": 4,
+      "residual_scale": 0.1,
+      "use_attention": true
+    },
+    "spatial2": {
+      "type": "radar_prior_dynamic_sfe",
+      "static_gamma": 0.5,
+      "static_delta": 5,
+      "static_weight": 0.7,
+      "dynamic_temperature": 0.2,
+      "dropout": 0.1
+    },
+    "temporal2": {
+      "type": "stgnn_tfe"
+    }
+  }
+}

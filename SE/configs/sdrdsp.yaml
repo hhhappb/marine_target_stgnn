@@ -1,0 +1,29 @@
+# SE on SDRDSP -- REFERENCE ONLY, NOT a valid SE operating point.
+#
+# The SE model (selected_e4.E4Model) is compiled for P=8 pulses; SDRDSP uses
+# P=4 and N=256. Running SE on SDRDSP therefore requires a separate model
+# configuration (P=4 build) and is NOT covered by this package. This file only
+# records the SDRDSP settings the SE backbone family was originally derived
+# from, so nothing is silently run with mismatched shapes.
+#
+# Requires a NEW config (note: N=256 / P=4 must be configured separately).
+extends: default
+
+data:
+  source: "sdrdsp"
+  N: 256                # SDRDSP range cells (NOT SE's N=14)
+  P: 4                  # SDRDSP CPI (NOT SE's P=8)
+  normalize: "P99"
+  P99_scale: 3121.3
+  train_file: "data/20210106155330_01_staring.mat"
+  test_file: "data/20210106155432_01_staring.mat"
+
+model:
+  # E4Model() is fixed at P=8 and will reject P=4 input shapes.
+  num_parameters: null
+
+training:
+  epochs: 20
+  batch_size: 24
+  sampling: "scr_uniform"
+  loss: "ce"

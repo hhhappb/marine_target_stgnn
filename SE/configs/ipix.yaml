@@ -1,0 +1,34 @@
+# SE on IPIX Dartmouth (protocol v2.x / PAX-L1)
+# Extends default.yaml with IPIX-specific settings.
+
+extends: default
+
+data:
+  source: "ipix_dartmouth"
+  # window8_stride4_related: official ipixload auto-double processed echoes.
+  processed_dir: "stgnn ipix/ipix_dartmouth/processed/window8_stride4_related"
+  N: 14                 # IPIX range cells
+  P: 8                  # SE fixed pulse window
+  polarization: "hh"
+  normalize: "auto"
+  target_policy: "primary_strict"   # only role==2 (PRC) cells are positive
+  # v2.1 range_roll augmentation (training only)
+  range_roll:
+    mode: "clutter_fill"
+    max_shift: 3
+    include_identity: true
+
+training:
+  epochs: 60
+  batch_size: 64
+  grad_accum: 8
+  sampling: "range_roll_online"   # re-sampled per epoch on the complex echo
+  loss: "ce"
+
+far:
+  threshold_source: "train_clutter"
+  nominal_pfa: 0.001
+
+eval:
+  no_scr_injection: true          # real targets, per-range-cell Pd/PF
+  temperature_scaling: "auto (per-condition mean|logit| over train clutter, clip [2,16])"
